@@ -1,0 +1,25 @@
+schema: spec-driven
+
+context: |
+  Project: SnipeBot
+  Purpose: Self-hosted price drop tracker for personal use.
+  Primary user: single-user for now, but architecture must remain extensible to multi-user later.
+  Deployment: Ubuntu server with Docker Compose behind reverse proxy.
+  Frontend: React + Vite.
+  Backend: FastAPI + Python.
+  Database: SQLite for v1.
+  Notifications: first implementation via Telegram, but notifier abstraction must allow future Discord/Pushover adapters.
+  Scraping strategy: adapter-per-site. Standard flow is HTTP fetch + HTML parsing. Some sites may use optional Playwright fallback.
+  Initial supported shops: HEMA, Amazon.nl, AliExpress.
+  Product input: manual URL paste, plus optional custom label and target price.
+  Alerting rules: notify on every detected price drop and also on target price reached.
+  Architecture priorities:
+    - small, reversible changes
+    - clear separation between API, domain logic, scraping adapters, scheduling, notifications, and persistence
+    - avoid premature auth and multi-user complexity
+    - keep codebase easy to extend with more sites
+  Quality expectations:
+    - typed backend code where practical
+    - tests for core parsing and alert logic
+    - no silent failures in workers
+    - clear logging for scheduled checks
