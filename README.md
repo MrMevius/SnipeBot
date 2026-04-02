@@ -52,6 +52,10 @@ Variables:
 - `SNIPEBOT_LOG_LEVEL`: backend log level
 - `SNIPEBOT_DB_URL`: SQLite URL (`sqlite:////data/snipebot.db` in Docker)
 - `SNIPEBOT_WORKER_INTERVAL_SECONDS`: worker tick interval
+- `SNIPEBOT_NOTIFICATIONS_ENABLED`: enable alert notification dispatch
+- `SNIPEBOT_TELEGRAM_ENABLED`: enable Telegram notifier adapter
+- `SNIPEBOT_TELEGRAM_BOT_TOKEN`: Telegram bot token
+- `SNIPEBOT_TELEGRAM_CHAT_ID`: Telegram chat id to receive alerts
 - `SNIPEBOT_API_PORT`: host port for API in Docker Compose (default `8001`)
 - `VITE_API_BASE_URL`: frontend API base URL
 

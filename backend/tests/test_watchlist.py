@@ -8,6 +8,7 @@ from snipebot.persistence.db import get_engine, init_db
 def _reset_watch_items() -> None:
     init_db()
     with get_engine().begin() as connection:
+        connection.execute(text("DELETE FROM alert_events"))
         connection.execute(text("DELETE FROM price_checks"))
         connection.execute(text("DELETE FROM watch_items"))
 

@@ -61,6 +61,9 @@ class WatchItem(Base):
     checks: Mapped[list["PriceCheck"]] = relationship(
         back_populates="watch_item", cascade="all, delete-orphan"
     )
+    alert_events: Mapped[list["AlertEvent"]] = relationship(
+        back_populates="watch_item", cascade="all, delete-orphan"
+    )
 
 
 class PriceCheck(Base):
@@ -87,3 +90,38 @@ class PriceCheck(Base):
     used_fallback: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     watch_item: Mapped[WatchItem] = relationship(back_populates="checks")
+    alert_events: Mapped[list["AlertEvent"]] = relationship(
+        back_populates="price_check"
+    )
+
+
+class AlertEvent(Base):
+    __tablename__ = "alert_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    watch_item_id: Mapped[int] = mapped_column(
+        ForeignKey("watch_items.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    price_check_id: Mapped[int] = mapped_column(
+        ForeignKey("price_checks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    alert_kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    dedup_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False, default="telegram")
+    delivery_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+    provider_message_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    label_or_title: Mapped[str] = mapped_column(String(512), nullable=False)
+    site_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    product_url: Mapped[str] = mapped_column(Text, nullable=False)
+    old_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    new_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    target_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    watch_item: Mapped[WatchItem] = relationship(back_populates="alert_events")
+    price_check: Mapped[PriceCheck] = relationship(back_populates="alert_events")

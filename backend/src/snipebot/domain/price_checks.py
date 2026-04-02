@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from snipebot.adapters.sites.registry import get_adapter
 from snipebot.core.config import Settings
-from snipebot.persistence.models import PriceCheck, WatchItem
+from snipebot.domain.alerts import AlertContext, decide_alerts, format_alert_message
+from snipebot.notifications.factory import build_notifier
+from snipebot.persistence.models import AlertEvent, PriceCheck, WatchItem
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +18,12 @@ logger = logging.getLogger(__name__)
 def run_due_price_checks(db_session: Session, settings: Settings) -> int:
     items = _get_due_items(db_session, settings.worker_batch_size)
     processed = 0
+    notifier = build_notifier(settings)
 
     for item in items:
         processed += 1
         try:
-            _run_check_for_item(db_session, item, settings)
+            _run_check_for_item(db_session, item, settings, notifier=notifier)
             db_session.commit()
         except Exception as exc:  # pragma: no cover - safety net
             db_session.rollback()
@@ -49,11 +52,16 @@ def _get_due_items(db_session: Session, limit: int) -> list[WatchItem]:
 
 
 def _run_check_for_item(
-    db_session: Session, item: WatchItem, settings: Settings
+    db_session: Session,
+    item: WatchItem,
+    settings: Settings,
+    *,
+    notifier,
 ) -> None:
     checked_at = datetime.now(UTC)
     item.last_checked_at = checked_at
     item.check_count += 1
+    previous_successful_price = item.current_price
 
     adapter = get_adapter(item.site_key)
     if adapter is None:
@@ -89,19 +97,29 @@ def _run_check_for_item(
             seconds=settings.check_interval_seconds
         )
 
-        db_session.add(
-            PriceCheck(
-                watch_item_id=item.id,
-                checked_at=checked_at,
-                adapter_key=adapter.site_key,
-                status="ok",
-                title=result.data.title,
-                current_price=result.data.current_price,
-                currency=result.data.currency,
-                availability=result.data.availability,
-                parser_metadata=result.data.parser_metadata,
-                used_fallback=result.used_fallback,
-            )
+        check = PriceCheck(
+            watch_item_id=item.id,
+            checked_at=checked_at,
+            adapter_key=adapter.site_key,
+            status="ok",
+            title=result.data.title,
+            current_price=result.data.current_price,
+            currency=result.data.currency,
+            availability=result.data.availability,
+            parser_metadata=result.data.parser_metadata,
+            used_fallback=result.used_fallback,
+        )
+        db_session.add(check)
+        db_session.flush()
+
+        _dispatch_alerts_for_success(
+            db_session,
+            item=item,
+            check=check,
+            checked_at=checked_at,
+            previous_successful_price=previous_successful_price,
+            settings=settings,
+            notifier=notifier,
         )
         logger.info(
             "price_check.ok watch_item_id=%s adapter=%s price=%s currency=%s used_fallback=%s",
@@ -163,3 +181,95 @@ def _record_failure(
         error_kind,
         used_fallback,
     )
+
+
+def _dispatch_alerts_for_success(
+    db_session: Session,
+    *,
+    item: WatchItem,
+    check: PriceCheck,
+    checked_at: datetime,
+    previous_successful_price,
+    settings: Settings,
+    notifier,
+) -> None:
+    intents = decide_alerts(
+        previous_successful_price=previous_successful_price,
+        new_price=check.current_price,
+        target_price=item.target_price,
+    )
+    if not intents:
+        return
+
+    if not settings.notifications_enabled:
+        return
+
+    context = AlertContext(
+        watch_item_id=item.id,
+        label_or_title=item.custom_label or check.title or "Product",
+        site_key=item.site_key,
+        url=item.url,
+        checked_at=checked_at,
+    )
+
+    for intent in intents:
+        existing = db_session.scalar(
+            select(AlertEvent.id)
+            .where(
+                AlertEvent.watch_item_id == item.id,
+                AlertEvent.alert_kind == intent.kind,
+                AlertEvent.dedup_key == intent.dedup_key,
+                AlertEvent.delivery_status == "sent",
+            )
+            .limit(1)
+        )
+        if existing is not None:
+            logger.info(
+                "alert.dedup_suppressed watch_item_id=%s alert_kind=%s dedup_key=%s",
+                item.id,
+                intent.kind,
+                intent.dedup_key,
+            )
+            continue
+
+        message = format_alert_message(intent, context)
+
+        response = notifier.send(message)
+        delivery_status = "sent" if response.ok else "failed"
+        provider_message_id = response.provider_message_id
+        error_message = None if response.ok else response.error
+
+        db_session.add(
+            AlertEvent(
+                watch_item_id=item.id,
+                price_check_id=check.id,
+                alert_kind=intent.kind,
+                dedup_key=intent.dedup_key,
+                channel="telegram",
+                delivery_status=delivery_status,
+                sent_at=checked_at,
+                provider_message_id=provider_message_id,
+                label_or_title=context.label_or_title,
+                site_key=context.site_key,
+                product_url=context.url,
+                old_price=intent.old_price,
+                new_price=intent.new_price,
+                target_price=intent.target_price,
+                message_text=message.text,
+                error_message=error_message,
+            )
+        )
+
+        if delivery_status == "sent":
+            logger.info(
+                "alert.sent watch_item_id=%s alert_kind=%s channel=telegram",
+                item.id,
+                intent.kind,
+            )
+        else:
+            logger.warning(
+                "alert.failed watch_item_id=%s alert_kind=%s channel=telegram reason=%s",
+                item.id,
+                intent.kind,
+                error_message,
+            )

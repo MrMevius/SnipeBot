@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     worker_batch_size: int = 25
     playwright_fallback_enabled: bool = False
     playwright_fallback_adapters: str = ""
+    notifications_enabled: bool = False
+    telegram_enabled: bool = False
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
 
     @property
     def is_sqlite(self) -> bool:
@@ -40,6 +44,14 @@ def get_settings() -> Settings:
         playwright_fallback_adapters=_get_env(
             "SNIPEBOT_PLAYWRIGHT_FALLBACK_ADAPTERS", ""
         ),
+        notifications_enabled=_get_env(
+            "SNIPEBOT_NOTIFICATIONS_ENABLED", "false"
+        ).lower()
+        in {"1", "true", "yes", "on"},
+        telegram_enabled=_get_env("SNIPEBOT_TELEGRAM_ENABLED", "false").lower()
+        in {"1", "true", "yes", "on"},
+        telegram_bot_token=_get_env("SNIPEBOT_TELEGRAM_BOT_TOKEN", ""),
+        telegram_chat_id=_get_env("SNIPEBOT_TELEGRAM_CHAT_ID", ""),
     )
 
 

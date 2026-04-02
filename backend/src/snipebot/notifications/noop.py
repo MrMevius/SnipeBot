@@ -1,9 +1,7 @@
-from abc import ABC, abstractmethod
-
+from snipebot.notifications.base import Notifier
 from snipebot.notifications.models import NotificationMessage, NotificationResult
 
 
-class Notifier(ABC):
-    @abstractmethod
+class NoopNotifier(Notifier):
     def send(self, message: NotificationMessage) -> NotificationResult:
-        raise NotImplementedError
+        return NotificationResult(ok=False, error="notifications_disabled")
