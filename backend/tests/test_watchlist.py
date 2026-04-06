@@ -181,6 +181,37 @@ def test_watchlist_preview_returns_product_metadata(monkeypatch) -> None:
     assert payload["suggested_label"] == "Test Headphones"
 
 
+def test_watchlist_preview_returns_parse_error_details(monkeypatch) -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    class _FailingAdapter:
+        site_key = "hema"
+
+        def check(
+            self, url: str, *, allow_playwright_fallback: bool
+        ) -> AdapterCheckResult:
+            assert "hema.nl" in url
+            return AdapterCheckResult(
+                ok=False,
+                status="parse_error",
+                error_kind="parse_error",
+                error_message="Could not parse product price",
+            )
+
+    monkeypatch.setattr(
+        watchlist_api, "get_adapter", lambda site_key: _FailingAdapter()
+    )
+
+    response = client.get(
+        "/watchlist/preview",
+        params={"url": "https://www.hema.nl/heren/herenkleding/shirts/example.html"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Preview failed: Could not parse product price"
+
+
 def test_watch_item_history_returns_series_and_summary() -> None:
     _reset_watch_items()
     client = TestClient(app)

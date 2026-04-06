@@ -83,7 +83,7 @@ npm run test
 - Existing watchlist UI: `frontend/src/App.tsx`
 
 ## Current status
-Completed (implementation done; runtime test execution in this shell remains partially blocked by missing host dependencies)
+Completed (HEMA preview parsing hardened with regression coverage; full environment-wide test execution remains partially blocked by missing host dependencies)
 
 ## What changed
 - Added `GET /watchlist/preview?url=...` endpoint in `backend/src/snipebot/api/watchlist.py`:
@@ -108,6 +108,28 @@ Completed (implementation done; runtime test execution in this shell remains par
 - Expanded tests:
   - backend: `backend/tests/test_watchlist.py` with preview endpoint and history endpoint coverage,
   - frontend: `frontend/src/App.test.tsx` with history rendering + submit flow + URL auto-fill behavior.
+- Hardened backend price parsing in `backend/src/snipebot/adapters/sites/parsing.py` to reduce HEMA preview parse failures:
+  - added structured-data price extraction (`application/ld+json` `"price"` values),
+  - added OpenGraph/meta extraction for `product:price:amount`,
+  - kept and improved EUR/€ regex fallback for localized formatting.
+- Added explicit parser regressions in `backend/tests/test_adapters.py` for:
+  - JSON-LD `offers.price`,
+  - `meta property="product:price:amount"`,
+  - localized format like `€ 1.299,95`,
+  - HEMA adapter parse path using JSON-LD product payload.
+- Added preview API regression in `backend/tests/test_watchlist.py` to assert parse failures return deterministic HTTP 422 detail text.
+- Added an offline fixture-based integration-style adapter regression:
+  - `backend/tests/fixtures/hema_product_page_fixture.html` (realistic HEMA-like product HTML),
+  - `test_hema_adapter_parses_realistic_fixture_html` in `backend/tests/test_adapters.py` to verify title/price/currency/availability parsing without live HTTP dependencies.
+- Added a repository CI workflow at `.github/workflows/ci.yml` with backend checks that include:
+  - targeted HEMA parser regression gate: `pytest backend/tests/test_adapters.py -q -k "hema"`,
+  - full backend suite: `pytest backend/tests -q`.
+- Extended `.github/workflows/ci.yml` with a dedicated `frontend-tests` job:
+  - Node 20 setup,
+  - `npm ci` in `frontend/`,
+  - `npm run test` in `frontend/`,
+  - `npm run build` in `frontend/` as an additional quality gate.
+- Updated `README.md` test commands to explicitly include the HEMA parser regression command before the full backend suite.
 
 ## How to verify
 1. Backend:
@@ -119,7 +141,11 @@ Completed (implementation done; runtime test execution in this shell remains par
    - `npm run test`
 3. Optional backend syntax gate:
    - `python3 -m compileall backend/src backend/tests`
-4. Manual functional check:
+4. Targeted parser/preview regressions:
+   - `pytest backend/tests/test_adapters.py -q`
+   - `pytest backend/tests/test_adapters.py -q -k "hema"`
+   - `pytest backend/tests/test_watchlist.py -q`
+5. Manual functional check:
    - Open app, paste supported product URL in Add Product form,
    - verify preview appears and label auto-fills if untouched,
    - save item and verify insights/mini trend render in watchlist table.
@@ -131,3 +157,12 @@ Completed (implementation done; runtime test execution in this shell remains par
 - Re-ran `python3 -m compileall backend/src backend/tests` during close-out: succeeded.
 - Re-ran `pytest backend/tests/test_watchlist.py -q` during close-out: failed with same missing dependency (`ModuleNotFoundError: No module named 'fastapi'`).
 - Re-ran frontend tests command `npm --prefix frontend run test` during close-out: blocked because `npm` is unavailable in host shell (`/bin/bash: npm: command not found`).
+- `pytest backend/tests/test_adapters.py -q`: initial run failed (`2 failed`) due an overly strict currency regex in the first patch; adjusted regex and re-ran.
+- `pytest backend/tests/test_adapters.py -q`: succeeded after fix (`8 passed`).
+- `pytest backend/tests/test_watchlist.py -q`: still blocked in this shell because `fastapi` is unavailable (`ModuleNotFoundError: No module named 'fastapi'`).
+- `python3 -m pip install -e "./backend[dev]"`: blocked because `pip` is unavailable in this shell (`/usr/bin/python3: No module named pip`).
+- `python3 -m compileall backend/src backend/tests`: succeeded after regression additions.
+- `pytest backend/tests/test_adapters.py -q` after adding offline fixture test: succeeded (`9 passed`).
+- `pytest backend/tests/test_adapters.py -q -k "hema"`: succeeded (`2 passed, 7 deselected`).
+- `npm --prefix frontend run test`: blocked in this host shell because `npm` is unavailable (`/bin/bash: npm: command not found`).
+- `npm --prefix frontend run build`: blocked in this host shell because `npm` is unavailable (`/bin/bash: npm: command not found`).

@@ -1,4 +1,5 @@
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +12,8 @@ from snipebot.adapters.sites.parsing import (
     extract_title,
     infer_availability,
 )
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def _sample_html(title: str, price: str) -> str:
@@ -52,6 +55,72 @@ def test_parsing_edge_cases() -> None:
 
     with pytest.raises(ValueError, match="Could not parse product price"):
         extract_price("<span>Price unavailable</span>")
+
+
+@pytest.mark.parametrize(
+    ("html", "expected"),
+    [
+        (
+            '<script type="application/ld+json">{"offers":{"price":"24.99"}}</script>',
+            Decimal("24.99"),
+        ),
+        (
+            '<meta property="product:price:amount" content="14.95" />',
+            Decimal("14.95"),
+        ),
+        (
+            '<meta content="1299,50" property="product:price:amount" />',
+            Decimal("1299.50"),
+        ),
+        (
+            "<span>€ 1.299,95</span>",
+            Decimal("1299.95"),
+        ),
+    ],
+)
+def test_extract_price_supports_structured_and_formatted_sources(
+    html: str,
+    expected: Decimal,
+) -> None:
+    assert extract_price(html) == expected
+
+
+def test_hema_adapter_parses_json_ld_price() -> None:
+    adapter = HemaAdapter()
+    html = """
+    <html>
+      <head>
+        <title>Heren T-shirt slimfit</title>
+        <script type="application/ld+json">
+          {"@type":"Product","offers":{"@type":"Offer","price":"29.99","priceCurrency":"EUR"}}
+        </script>
+      </head>
+      <body><div>Op voorraad</div></body>
+    </html>
+    """
+
+    parsed = adapter.parse_html(
+        "https://www.hema.nl/heren/herenkleding/shirts/example.html",
+        html,
+    )
+    assert parsed.current_price == Decimal("29.99")
+    assert parsed.currency == "EUR"
+    assert parsed.availability == "in_stock"
+
+
+def test_hema_adapter_parses_realistic_fixture_html() -> None:
+    adapter = HemaAdapter()
+    html = (FIXTURES_DIR / "hema_product_page_fixture.html").read_text(encoding="utf-8")
+
+    parsed = adapter.parse_html(
+        "https://www.hema.nl/heren/herenkleding/shirts/heren-t-shirts-slimfit-v-hals-extra-lang---2-stuks-zwart-34290650BLACK.html",
+        html,
+    )
+
+    assert "HEMA" in parsed.title
+    assert parsed.current_price == Decimal("24.99")
+    assert parsed.currency == "EUR"
+    assert parsed.availability == "in_stock"
 
 
 class _FallbackAdapter(SiteAdapter):

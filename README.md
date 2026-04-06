@@ -229,6 +229,7 @@ Backend:
 
 ```bash
 pip install -e "./backend[dev]"
+pytest backend/tests/test_adapters.py -q -k "hema"
 pytest backend/tests -q
 ```
 
