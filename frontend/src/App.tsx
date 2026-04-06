@@ -1,12 +1,18 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import {
+  fetchWatchItemAlerts,
+  fetchWatchItemDetail,
   fetchWatchItemHistory,
   fetchWatchlist,
+  patchWatchItem,
   previewWatchItemByUrl,
+  triggerWatchItemCheckNow,
+  upsertWatchItem,
+  type AlertEvent,
   type WatchItem,
+  type WatchItemDetailResponse,
   type WatchItemHistoryResponse,
   type WatchItemPreviewResponse,
-  upsertWatchItem,
 } from "./api/client";
 
 function isHttpUrl(value: string): boolean {
@@ -22,45 +28,622 @@ function formatPrice(value: number | null | undefined): string {
   if (value === null || value === undefined) {
     return "-";
   }
-  return value.toFixed(2);
+  return `€ ${value.toFixed(2)}`;
 }
 
-function MiniTrendChart({
+function formatDateTime(value: Date | string | null | undefined): string {
+  if (!value) {
+    return "-";
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value instanceof Date ? value.toISOString() : value;
+  }
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+}
+
+function getNiceStep(maxValue: number, intervals: number): number {
+  if (maxValue <= 0) {
+    return 1;
+  }
+
+  const roughStep = maxValue / Math.max(intervals, 1);
+  const exponent = Math.floor(Math.log10(roughStep));
+  const normalized = roughStep / 10 ** exponent;
+  const niceBases = [1, 2, 2.5, 5, 10];
+  const base = niceBases.find((candidate) => normalized <= candidate) ?? 10;
+  return base * 10 ** exponent;
+}
+
+function deriveProductName(label: string | null | undefined, url: string): string {
+  if (label && label.trim()) {
+    return label.trim();
+  }
+
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    const candidate = segments[segments.length - 1] ?? parsed.hostname;
+    return decodeURIComponent(candidate).replace(/[-_]+/g, " ").trim() || parsed.hostname;
+  } catch {
+    return "(unlabeled product)";
+  }
+}
+
+function TrendChart({
   points,
+  width,
+  height,
+  className,
+  interactive = false,
+  daysWindow,
 }: {
   points: Array<{ checked_at: string; price: number }>;
+  width: number;
+  height: number;
+  className?: string;
+  interactive?: boolean;
+  daysWindow?: number;
 }) {
   if (points.length < 2) {
     return <div className="mini-chart-empty">Not enough data</div>;
   }
 
-  const width = 180;
-  const height = 56;
-  const padding = 4;
+  const gradientIdRef = useRef(`trend-gradient-${Math.random().toString(36).slice(2, 10)}`);
+  const [activeIndex, setActiveIndex] = useState<number | null>(interactive ? points.length - 1 : null);
 
-  const prices = points.map((point) => point.price);
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
-  const range = Math.max(max - min, 0.0001);
+  useEffect(() => {
+    if (!interactive) {
+      return;
+    }
+    setActiveIndex((previous) => {
+      if (previous === null) {
+        return points.length - 1;
+      }
+      return Math.min(previous, points.length - 1);
+    });
+  }, [interactive, points.length]);
 
-  const polyline = points
-    .map((point, index) => {
-      const x =
-        padding + (index * (width - padding * 2)) / Math.max(points.length - 1, 1);
-      const normalized = (point.price - min) / range;
-      const y = height - padding - normalized * (height - padding * 2);
-      return `${x},${y}`;
-    })
+  const padding = interactive
+    ? { left: 58, right: 20, top: 24, bottom: 50 }
+    : { left: 6, right: 6, top: 6, bottom: 6 };
+
+  const pointsWithTs = points.map((point, index) => {
+    const timestamp = new Date(point.checked_at).getTime();
+    return {
+      ...point,
+      index,
+      timestamp: Number.isNaN(timestamp) ? null : timestamp,
+    };
+  });
+
+  const prices = pointsWithTs.map((point) => point.price);
+  const highestMeasuredPrice = Math.max(...prices);
+  const intervals = 4;
+  const yMaxRaw = Math.max(highestMeasuredPrice * 1.2, 1);
+  const yStep = getNiceStep(yMaxRaw, intervals);
+  const yMax = Math.ceil(yMaxRaw / yStep) * yStep;
+  const range = Math.max(yMax, 0.0001);
+
+  const nowTs = Date.now();
+  const fallbackMinTs = pointsWithTs[0].timestamp ?? nowTs;
+  const fallbackMaxTs = pointsWithTs[pointsWithTs.length - 1].timestamp ?? nowTs;
+  const windowEndTs = interactive && daysWindow ? nowTs : fallbackMaxTs;
+  const windowStartTs = interactive && daysWindow
+    ? windowEndTs - daysWindow * 24 * 60 * 60 * 1000
+    : fallbackMinTs;
+  const timeRange = Math.max(windowEndTs - windowStartTs, 1);
+  const chartWidth = Math.max(width - padding.left - padding.right, 1);
+  const chartHeight = Math.max(height - padding.top - padding.bottom, 1);
+
+  const coordinates = pointsWithTs.map((point, index) => {
+    const xRatio = point.timestamp === null
+      ? index / Math.max(pointsWithTs.length - 1, 1)
+      : (point.timestamp - windowStartTs) / timeRange;
+    const x = padding.left + Math.min(Math.max(xRatio, 0), 1) * chartWidth;
+    const normalized = point.price / range;
+    const y = height - padding.bottom - normalized * chartHeight;
+    return { x, y, point };
+  });
+
+  const polyline = coordinates
+    .map((coordinate) => `${coordinate.x},${coordinate.y}`)
     .join(" ");
 
+  const areaPath =
+    `M ${coordinates[0].x} ${height - padding.bottom} ` +
+    coordinates.map((coordinate) => `L ${coordinate.x} ${coordinate.y}`).join(" ") +
+    ` L ${coordinates[coordinates.length - 1].x} ${height - padding.bottom} Z`;
+
+  const activePoint =
+    interactive && activeIndex !== null ? coordinates[Math.min(activeIndex, coordinates.length - 1)] : null;
+
+  const tooltipLeft = activePoint
+    ? Math.min(Math.max(activePoint.x, 92), width - 92)
+    : 0;
+
+  const yAxisTicks = interactive
+    ? [0, 1, 2, 3, 4].map((line) => ({
+        y: padding.top + (line * chartHeight) / 4,
+        value: yMax - (line * yMax) / 4,
+      }))
+    : [];
+
+  const xAxisTicks = interactive
+    ? [0, 1, 2, 3, 4].map((tick) => {
+        const ratio = tick / 4;
+        const timestamp = windowStartTs + ratio * timeRange;
+        return {
+          x: padding.left + ratio * chartWidth,
+          label: formatDateTime(new Date(timestamp)),
+        };
+      })
+    : [];
+
+  function handleKeyDown(event: KeyboardEvent<SVGSVGElement>) {
+    if (!interactive) {
+      return;
+    }
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      setActiveIndex((previous) => {
+        const next = previous ?? points.length - 1;
+        return Math.max(next - 1, 0);
+      });
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setActiveIndex((previous) => {
+        const next = previous ?? points.length - 1;
+        return Math.min(next + 1, points.length - 1);
+      });
+      return;
+    }
+
+    if (event.key === "Home") {
+      event.preventDefault();
+      setActiveIndex(0);
+      return;
+    }
+
+    if (event.key === "End") {
+      event.preventDefault();
+      setActiveIndex(points.length - 1);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setActiveIndex(null);
+    }
+  }
+
+  if (!interactive) {
+    return (
+      <svg className={className ?? "mini-chart"} viewBox={`0 0 ${width} ${height}`} role="img">
+        <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="2" />
+      </svg>
+    );
+  }
+
   return (
-    <svg className="mini-chart" viewBox={`0 0 ${width} ${height}`} role="img">
-      <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="2" />
-    </svg>
+    <div className={className ?? "detail-chart"}>
+      <svg
+        className="detail-chart-svg"
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Price trend chart"
+        tabIndex={0}
+        onFocus={() => setActiveIndex((previous) => previous ?? points.length - 1)}
+        onKeyDown={handleKeyDown}
+      >
+        <defs>
+          <linearGradient id={gradientIdRef.current} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#1f6feb" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#1f6feb" stopOpacity="0.04" />
+          </linearGradient>
+        </defs>
+
+        <line
+          className="chart-axis"
+          x1={padding.left}
+          y1={padding.top}
+          x2={padding.left}
+          y2={height - padding.bottom}
+        />
+        <line
+          className="chart-axis"
+          x1={padding.left}
+          y1={height - padding.bottom}
+          x2={width - padding.right}
+          y2={height - padding.bottom}
+        />
+
+        {yAxisTicks.map((tick, index) => (
+          <g key={`grid-${index}`}>
+            <line
+              className="chart-grid"
+              x1={padding.left}
+              y1={tick.y}
+              x2={width - padding.right}
+              y2={tick.y}
+            />
+            <text className="chart-axis-label" x={padding.left - 8} y={tick.y + 4} textAnchor="end">
+              {formatPrice(tick.value)}
+            </text>
+          </g>
+        ))}
+
+        {xAxisTicks.map((tick, index) => (
+          <g key={`x-tick-${index}`}>
+            <line
+              className="chart-grid chart-grid-vertical"
+              x1={tick.x}
+              y1={padding.top}
+              x2={tick.x}
+              y2={height - padding.bottom}
+            />
+            <text
+              className="chart-axis-label chart-axis-label-x"
+              x={tick.x}
+              y={height - padding.bottom + 18}
+              textAnchor={index === 0 ? "start" : index === xAxisTicks.length - 1 ? "end" : "middle"}
+            >
+              {tick.label}
+            </text>
+          </g>
+        ))}
+        <text className="chart-axis-title" x={(padding.left + width - padding.right) / 2} y={height - 10}>
+          Date/time
+        </text>
+        <text
+          className="chart-axis-title"
+          x={18}
+          y={(padding.top + height - padding.bottom) / 2}
+          transform={`rotate(-90 18 ${(padding.top + height - padding.bottom) / 2})`}
+          textAnchor="middle"
+        >
+          Price
+        </text>
+
+        <path d={areaPath} className="chart-area" fill={`url(#${gradientIdRef.current})`} />
+        <polyline points={polyline} className="chart-line" fill="none" />
+
+        {coordinates.map((coordinate, index) => (
+          <g key={`${coordinate.point.checked_at}-${index}`}>
+            <circle className="chart-point" cx={coordinate.x} cy={coordinate.y} r="2.5" />
+            <circle
+              className="chart-hit-point"
+              data-testid={`detail-chart-point-${index}`}
+              cx={coordinate.x}
+              cy={coordinate.y}
+              r="10"
+              onMouseEnter={() => setActiveIndex(index)}
+              onFocus={() => setActiveIndex(index)}
+            />
+          </g>
+        ))}
+
+        {activePoint ? (
+          <circle className="chart-active-point" cx={activePoint.x} cy={activePoint.y} r="4.5" />
+        ) : null}
+      </svg>
+
+      {activePoint ? (
+        <div
+          className="chart-tooltip"
+          data-testid="detail-chart-tooltip"
+          style={{ left: `${tooltipLeft}px`, top: `${activePoint.y - 8}px` }}
+        >
+          <strong>{formatPrice(activePoint.point.price)}</strong>
+          <span>{formatDateTime(activePoint.point.checked_at)}</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type Route = { kind: "overview" } | { kind: "detail"; itemId: number };
+
+function parseRoute(pathname: string): Route {
+  const match = pathname.match(/^\/products\/(\d+)$/);
+  if (match) {
+    return { kind: "detail", itemId: Number(match[1]) };
+  }
+  return { kind: "overview" };
+}
+
+function ProductDetailPage({
+  itemId,
+  onNavigate,
+}: {
+  itemId: number;
+  onNavigate: (href: string) => void;
+}) {
+  const [detail, setDetail] = useState<WatchItemDetailResponse | null>(null);
+  const [history, setHistory] = useState<WatchItemHistoryResponse | null>(null);
+  const [alerts, setAlerts] = useState<AlertEvent[]>([]);
+  const [days, setDays] = useState(30);
+  const [label, setLabel] = useState("");
+  const [targetPrice, setTargetPrice] = useState("");
+  const [notes, setNotes] = useState("");
+  const [active, setActive] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [checkNowFeedback, setCheckNowFeedback] = useState<string | null>(null);
+
+  async function loadData() {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const [detailPayload, historyPayload, alertPayload] = await Promise.all([
+        fetchWatchItemDetail(itemId),
+        fetchWatchItemHistory(itemId, days),
+        fetchWatchItemAlerts(itemId, 20),
+      ]);
+
+      setDetail(detailPayload);
+      setHistory(historyPayload);
+      setAlerts(alertPayload.events);
+      setLabel(detailPayload.item.custom_label || "");
+      setTargetPrice(
+        detailPayload.item.target_price !== null ? String(detailPayload.item.target_price) : "",
+      );
+      setNotes(detailPayload.item.notes || "");
+      setActive(detailPayload.item.active);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadData().catch((err: Error) => setError(err.message));
+  }, [itemId, days]);
+
+  async function handleSave(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setFeedback(null);
+
+    const candidate = targetPrice.trim();
+    let parsedTarget: number | null = null;
+    if (candidate) {
+      parsedTarget = Number(candidate);
+      if (Number.isNaN(parsedTarget) || parsedTarget <= 0) {
+        setError("Target price must be a positive number.");
+        return;
+      }
+    }
+
+    try {
+      const updated = await patchWatchItem(itemId, {
+        custom_label: label.trim() || null,
+        target_price: parsedTarget,
+        notes: notes.trim() || null,
+        active,
+      });
+
+      setDetail((previous) => {
+        if (!previous) {
+          return previous;
+        }
+        return { ...previous, item: updated };
+      });
+      setFeedback("Saved changes.");
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function handleCheckNow() {
+    setError(null);
+    setCheckNowFeedback(null);
+    try {
+      const response = await triggerWatchItemCheckNow(itemId);
+      setDetail((previous) => {
+        if (!previous) {
+          return previous;
+        }
+        return { ...previous, item: response.item };
+      });
+      setCheckNowFeedback("Check queued for next worker tick.");
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  return (
+    <main className="container">
+      <div className="page-header">
+        <button type="button" className="secondary" onClick={() => onNavigate("/")}>
+          ← Back to watchlist
+        </button>
+        <h1>
+          Product Detail — {detail ? deriveProductName(detail.item.custom_label, detail.item.url) : "..."}
+        </h1>
+      </div>
+
+      {loading ? (
+        <section className="panel">
+          <p className="muted">Loading product details…</p>
+        </section>
+      ) : error ? (
+        <section className="panel">
+          <p className="error">{error}</p>
+        </section>
+      ) : detail ? (
+        <> 
+          <section className="panel">
+            <h2>Price history</h2>
+            <div className="days-toggle">
+              {[7, 30, 90].map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={days === value ? "pill active" : "pill"}
+                  onClick={() => setDays(value)}
+                >
+                  {value}d
+                </button>
+              ))}
+            </div>
+            {history?.checks_count ? (
+              <>
+                <TrendChart
+                  points={history.series}
+                  width={860}
+                  height={260}
+                  className="detail-chart"
+                  interactive
+                  daysWindow={days}
+                />
+                <div className="muted">
+                  Latest: {formatPrice(history.latest_price)} · Lowest: {formatPrice(history.lowest_price)}
+                  {' '}· Highest: {formatPrice(history.highest_price)}
+                </div>
+              </>
+            ) : (
+              <p className="muted">No history yet.</p>
+            )}
+          </section>
+
+          <section className="panel">
+            <h2>Snapshot</h2>
+            <div className="snapshot-grid">
+              <div>
+                <div className="muted">Current price</div>
+                <strong>{formatPrice(detail.item.current_price)}</strong>
+              </div>
+              <div>
+                <div className="muted">Last check</div>
+                <strong>{formatDateTime(detail.item.last_checked_at)}</strong>
+              </div>
+              <div>
+                <div className="muted">Status</div>
+                <strong>{detail.item.last_status}</strong>
+              </div>
+              <div>
+                <div className="muted">7 day low</div>
+                <strong>{formatPrice(detail.lows.low_7d)}</strong>
+              </div>
+              <div>
+                <div className="muted">30 day low</div>
+                <strong>{formatPrice(detail.lows.low_30d)}</strong>
+              </div>
+              <div>
+                <div className="muted">All time low</div>
+                <strong>{formatPrice(detail.lows.all_time_low)}</strong>
+              </div>
+            </div>
+            <div className="muted">{detail.item.url}</div>
+          </section>
+
+          <section className="panel">
+            <details className="manage-details">
+              <summary>Manage product</summary>
+              <form onSubmit={handleSave} className="detail-form">
+                <label>
+                  Label
+                  <input
+                    type="text"
+                    value={label}
+                    onChange={(event) => setLabel(event.target.value)}
+                    placeholder="Product label"
+                  />
+                </label>
+                <label>
+                  Target price (optional)
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={targetPrice}
+                    onChange={(event) => setTargetPrice(event.target.value)}
+                    placeholder="39.99"
+                  />
+                </label>
+                <label>
+                  Notes
+                  <textarea
+                    rows={4}
+                    value={notes}
+                    onChange={(event) => setNotes(event.target.value)}
+                    placeholder="Notes about this product"
+                  />
+                </label>
+                <label className="toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    onChange={(event) => setActive(event.target.checked)}
+                  />
+                  Active
+                </label>
+                <div className="actions-row">
+                  <button type="submit">Save</button>
+                  <button type="button" className="secondary" onClick={handleCheckNow}>
+                    Check now
+                  </button>
+                </div>
+              </form>
+              {feedback && <p className="success">{feedback}</p>}
+              {checkNowFeedback && <p className="success">{checkNowFeedback}</p>}
+            </details>
+          </section>
+
+          <section className="panel">
+            <h2>Alert history</h2>
+            {alerts.length === 0 ? (
+              <p className="muted">No alerts for this product yet.</p>
+            ) : (
+              <table>
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Kind</th>
+                    <th>Status</th>
+                    <th>Old</th>
+                    <th>New</th>
+                    <th>Target</th>
+                    <th>Channel</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {alerts.map((event) => (
+                    <tr key={event.id}>
+                      <td>{formatDateTime(event.sent_at)}</td>
+                      <td>{event.alert_kind}</td>
+                      <td>{event.delivery_status}</td>
+                      <td>{formatPrice(event.old_price)}</td>
+                      <td>{formatPrice(event.new_price)}</td>
+                      <td>{formatPrice(event.target_price)}</td>
+                      <td>{event.channel}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+        </>
+      ) : null}
+    </main>
   );
 }
 
 export function App() {
+  const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
   const [items, setItems] = useState<WatchItem[]>([]);
   const [histories, setHistories] = useState<Record<number, WatchItemHistoryResponse>>({});
   const [url, setUrl] = useState("");
@@ -74,6 +657,17 @@ export function App() {
   const [labelDirty, setLabelDirty] = useState(false);
   const labelRef = useRef(customLabel);
   const labelDirtyRef = useRef(labelDirty);
+
+  function navigate(href: string) {
+    window.history.pushState(null, "", href);
+    setRoute(parseRoute(window.location.pathname));
+  }
+
+  useEffect(() => {
+    const handler = () => setRoute(parseRoute(window.location.pathname));
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, []);
 
   useEffect(() => {
     labelRef.current = customLabel;
@@ -192,6 +786,10 @@ export function App() {
     }
   }
 
+  if (route.kind === "detail") {
+    return <ProductDetailPage itemId={route.itemId} onNavigate={navigate} />;
+  }
+
   return (
     <main className="container">
       <h1>SnipeBot Watchlist</h1>
@@ -202,24 +800,24 @@ export function App() {
           <div className="grid">
             <label>
               URL
-                <input
-                  type="url"
-                  placeholder="https://..."
-                  value={url}
-                  onChange={(event) => setUrl(event.target.value)}
-                />
+              <input
+                type="url"
+                placeholder="https://..."
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+              />
             </label>
             <label>
               Custom label (optional)
-                <input
-                  type="text"
-                  placeholder="Desk lamp"
-                  value={customLabel}
-                  onChange={(event) => {
-                    setLabelDirty(true);
-                    setCustomLabel(event.target.value);
-                  }}
-                />
+              <input
+                type="text"
+                placeholder="Desk lamp"
+                value={customLabel}
+                onChange={(event) => {
+                  setLabelDirty(true);
+                  setCustomLabel(event.target.value);
+                }}
+              />
             </label>
             <label>
               Target price (optional)
@@ -240,7 +838,7 @@ export function App() {
           <div className="preview-card">
             <strong>{preview.title}</strong>
             <div className="muted">
-              Site: {preview.site_key} · Price: {formatPrice(preview.current_price)} {preview.currency} ·
+              Site: {preview.site_key} · Price: {formatPrice(preview.current_price)} ·
               Availability: {preview.availability}
             </div>
           </div>
@@ -272,12 +870,22 @@ export function App() {
               {items.map((item) => (
                 <tr key={item.id}>
                   <td>
-                    <strong>{item.custom_label || "(no label)"}</strong>
+                    <strong>
+                      <a
+                        href={`/products/${item.id}`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          navigate(`/products/${item.id}`);
+                        }}
+                      >
+                        {item.custom_label || "(no label)"}
+                      </a>
+                    </strong>
                     <div className="muted">{item.url}</div>
                   </td>
                   <td>{item.site_key}</td>
-                  <td>{item.target_price ?? "-"}</td>
-                  <td>{item.current_price ?? "-"}</td>
+                  <td>{formatPrice(item.target_price)}</td>
+                  <td>{formatPrice(item.current_price)}</td>
                   <td>
                     {histories[item.id]?.checks_count ? (
                       <div className="insights">
@@ -290,7 +898,7 @@ export function App() {
                         <div className="insight-row">
                           <span>Hi:</span> {formatPrice(histories[item.id].highest_price)}
                         </div>
-                        <MiniTrendChart points={histories[item.id].series} />
+                        <TrendChart points={histories[item.id].series} width={180} height={56} />
                       </div>
                     ) : (
                       <span className="muted">-</span>
