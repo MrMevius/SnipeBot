@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal, InvalidOperation
+from html import unescape
 
 TITLE_PATTERN = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 PRICE_PATTERN = re.compile(
@@ -41,13 +42,15 @@ def extract_price(html: str) -> Decimal:
 
 
 def _structured_price_candidates(html: str) -> list[str]:
+    normalized_html = _decode_markup_for_structured_price(html)
+
     candidates = [
         match.group(1)
-        for match in JSON_LD_PRICE_PATTERN.finditer(html)
+        for match in JSON_LD_PRICE_PATTERN.finditer(normalized_html)
         if match.group(1)
     ]
 
-    for meta_tag_match in META_PRICE_TAG_PATTERN.finditer(html):
+    for meta_tag_match in META_PRICE_TAG_PATTERN.finditer(normalized_html):
         tag = meta_tag_match.group(0)
         if "product:price:amount" not in tag.lower():
             continue
@@ -56,6 +59,20 @@ def _structured_price_candidates(html: str) -> list[str]:
             candidates.append(content_match.group(1))
 
     return candidates
+
+
+def _decode_markup_for_structured_price(html: str) -> str:
+    normalized = html
+    for encoded, plain in (
+        (r"\u0022", '"'),
+        (r"\u003a", ":"),
+        (r"\u002e", "."),
+        (r"\u002c", ","),
+    ):
+        normalized = normalized.replace(encoded, plain)
+        normalized = normalized.replace(encoded.upper(), plain)
+
+    return unescape(normalized)
 
 
 def _parse_decimal_candidate(raw_value: str) -> Decimal | None:

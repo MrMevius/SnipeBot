@@ -130,6 +130,10 @@ Completed (HEMA preview parsing hardened with regression coverage; full environm
   - `npm run test` in `frontend/`,
   - `npm run build` in `frontend/` as an additional quality gate.
 - Updated `README.md` test commands to explicitly include the HEMA parser regression command before the full backend suite.
+- Fixed a remaining HEMA parsing gap for encoded payloads found in real page HTML:
+  - structured price extraction now decodes escaped unicode tokens (e.g. `\\u0022`, `\\u003a`, `\\u002e`) and HTML entities (e.g. `&quot;`) before running JSON/meta price regexes,
+  - this covers HEMA inline analytics/data blobs containing forms like `&quot;price&quot;:&quot;24.99&quot;` and `\\u0022price\\u0022\\u003a24\\u002e99`.
+- Added parser regressions in `backend/tests/test_adapters.py` for both encoded formats above to prevent recurrence.
 
 ## How to verify
 1. Backend:
@@ -166,3 +170,6 @@ Completed (HEMA preview parsing hardened with regression coverage; full environm
 - `pytest backend/tests/test_adapters.py -q -k "hema"`: succeeded (`2 passed, 7 deselected`).
 - `npm --prefix frontend run test`: blocked in this host shell because `npm` is unavailable (`/bin/bash: npm: command not found`).
 - `npm --prefix frontend run build`: blocked in this host shell because `npm` is unavailable (`/bin/bash: npm: command not found`).
+- Reproduced user-reported URL failure before fix using direct adapter check: `False parse_error ... Could not parse product price`.
+- `pytest backend/tests/test_adapters.py -q` after encoded-markup fix: succeeded (`11 passed`).
+- Rechecked the exact user-reported URL with adapter check after fix: `ok=True`, parsed price `24.99`.

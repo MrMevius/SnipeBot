@@ -65,6 +65,14 @@ def test_parsing_edge_cases() -> None:
             Decimal("24.99"),
         ),
         (
+            "<script>{&quot;price&quot;:&quot;24.99&quot;}</script>",
+            Decimal("24.99"),
+        ),
+        (
+            "<script>{\\u0022price\\u0022\\u003a24\\u002e99}</script>",
+            Decimal("24.99"),
+        ),
+        (
             '<meta property="product:price:amount" content="14.95" />',
             Decimal("14.95"),
         ),
