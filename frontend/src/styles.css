@@ -75,3 +75,40 @@ td {
 .success {
   color: #067647;
 }
+
+.preview-card {
+  margin-top: 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #f8fafc;
+}
+
+.insights {
+  min-width: 190px;
+  color: #344054;
+}
+
+.insight-row {
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.insight-row span {
+  color: #667085;
+  font-weight: 600;
+}
+
+.mini-chart {
+  display: block;
+  color: #1f6feb;
+  margin-top: 4px;
+  width: 180px;
+  height: 56px;
+}
+
+.mini-chart-empty {
+  color: #98a2b3;
+  font-size: 12px;
+  margin-top: 4px;
+}

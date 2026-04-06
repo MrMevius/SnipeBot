@@ -27,6 +27,31 @@ export type UpsertWatchItemResponse = {
   item: WatchItem;
 };
 
+export type WatchItemPreviewResponse = {
+  normalized_url: string;
+  site_key: string;
+  title: string;
+  current_price: number;
+  currency: string;
+  availability: string;
+  suggested_label: string;
+};
+
+export type WatchItemHistoryPoint = {
+  checked_at: string;
+  price: number;
+};
+
+export type WatchItemHistoryResponse = {
+  item_id: number;
+  site_key: string;
+  checks_count: number;
+  latest_price: number | null;
+  lowest_price: number | null;
+  highest_price: number | null;
+  series: WatchItemHistoryPoint[];
+};
+
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let detail = `Request failed with ${response.status}`;
@@ -60,4 +85,23 @@ export async function upsertWatchItem(
     body: JSON.stringify(payload),
   });
   return parseResponse<UpsertWatchItemResponse>(response);
+}
+
+export async function previewWatchItemByUrl(
+  url: string,
+): Promise<WatchItemPreviewResponse> {
+  const query = new URLSearchParams({ url });
+  const response = await fetch(`${API_BASE_URL}/watchlist/preview?${query.toString()}`);
+  return parseResponse<WatchItemPreviewResponse>(response);
+}
+
+export async function fetchWatchItemHistory(
+  itemId: number,
+  days = 30,
+): Promise<WatchItemHistoryResponse> {
+  const query = new URLSearchParams({ days: String(days) });
+  const response = await fetch(
+    `${API_BASE_URL}/watchlist/${itemId}/history?${query.toString()}`,
+  );
+  return parseResponse<WatchItemHistoryResponse>(response);
 }

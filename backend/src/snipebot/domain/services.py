@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from snipebot.adapters.sites.registry import detect_site_key
-from snipebot.persistence.models import WatchItem
+from snipebot.persistence.models import PriceCheck, WatchItem
 
 TRACKING_QUERY_KEYS = {
     "fbclid",
@@ -126,3 +126,37 @@ def deactivate_watch_item(
     db_session.commit()
     db_session.refresh(item)
     return item
+
+
+def get_watch_item_price_history(
+    db_session: Session,
+    *,
+    owner_id: str,
+    item_id: int,
+    days: int = 30,
+    max_points: int = 200,
+) -> tuple[WatchItem | None, list[PriceCheck]]:
+    item = db_session.scalar(
+        select(WatchItem).where(WatchItem.owner_id == owner_id, WatchItem.id == item_id)
+    )
+    if item is None:
+        return None, []
+
+    safe_days = max(1, min(days, 365))
+    safe_limit = max(1, min(max_points, 1000))
+    since = datetime.now(UTC) - timedelta(days=safe_days)
+
+    statement = (
+        select(PriceCheck)
+        .where(
+            PriceCheck.watch_item_id == item.id,
+            PriceCheck.status == "ok",
+            PriceCheck.current_price.is_not(None),
+            PriceCheck.checked_at >= since,
+        )
+        .order_by(PriceCheck.checked_at.asc())
+        .limit(safe_limit)
+    )
+
+    checks = list(db_session.scalars(statement).all())
+    return item, checks

@@ -1,6 +1,9 @@
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+from decimal import Decimal
 
+from snipebot.adapters.sites.base import AdapterCheckResult, ParsedProductData
+from snipebot.api import watchlist as watchlist_api
 from snipebot.main import app
 from snipebot.persistence.db import get_engine, init_db
 
@@ -139,3 +142,79 @@ def test_watchlist_create_read_update_deactivate_flow() -> None:
     assert final_items[0]["custom_label"] == "updated"
     assert final_items[0]["target_price"] == 17.25
     assert final_items[0]["active"] is False
+
+
+def test_watchlist_preview_returns_product_metadata(monkeypatch) -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    class _FakeAdapter:
+        site_key = "amazon_nl"
+
+        def check(
+            self, url: str, *, allow_playwright_fallback: bool
+        ) -> AdapterCheckResult:
+            assert "amazon.nl" in url
+            return AdapterCheckResult(
+                ok=True,
+                status="ok",
+                data=ParsedProductData(
+                    title="Test Headphones",
+                    current_price=Decimal("19.99"),
+                    currency="EUR",
+                    availability="in_stock",
+                ),
+            )
+
+    monkeypatch.setattr(watchlist_api, "get_adapter", lambda site_key: _FakeAdapter())
+
+    response = client.get(
+        "/watchlist/preview", params={"url": "https://www.amazon.nl/dp/B0123"}
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["site_key"] == "amazon_nl"
+    assert payload["title"] == "Test Headphones"
+    assert payload["current_price"] == 19.99
+    assert payload["currency"] == "EUR"
+    assert payload["suggested_label"] == "Test Headphones"
+
+
+def test_watch_item_history_returns_series_and_summary() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/watchlist",
+        json={
+            "url": "https://www.hema.nl/wonen-slapen/lamp",
+            "custom_label": "History Lamp",
+        },
+    )
+    assert create_response.status_code == 200
+    item_id = create_response.json()["item"]["id"]
+
+    with get_engine().begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO price_checks (watch_item_id, adapter_key, status, current_price, currency, availability, used_fallback)
+                VALUES (:item_id, 'hema', 'ok', 30.00, 'EUR', 'in_stock', 0),
+                       (:item_id, 'hema', 'ok', 25.00, 'EUR', 'in_stock', 0),
+                       (:item_id, 'hema', 'ok', 27.50, 'EUR', 'in_stock', 0)
+                """
+            ),
+            {"item_id": item_id},
+        )
+
+    response = client.get(f"/watchlist/{item_id}/history", params={"days": 30})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["item_id"] == item_id
+    assert payload["checks_count"] == 3
+    assert payload["latest_price"] == 27.5
+    assert payload["lowest_price"] == 25.0
+    assert payload["highest_price"] == 30.0
+    assert len(payload["series"]) == 3
