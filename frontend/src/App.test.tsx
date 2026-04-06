@@ -17,6 +17,20 @@ describe("App", () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
 
+      if (url.endsWith("/settings")) {
+        return {
+          ok: true,
+          json: async () => ({
+            notifications_enabled: false,
+            telegram_enabled: false,
+            check_interval_seconds: 1800,
+            playwright_fallback_enabled: false,
+            playwright_fallback_adapters: [],
+            log_level: "INFO",
+          }),
+        };
+      }
+
       if (url.includes("/watchlist/1/history")) {
         return {
           ok: true,
@@ -35,7 +49,7 @@ describe("App", () => {
         };
       }
 
-      if (url.endsWith("/watchlist")) {
+      if (/\/watchlist(\?|$)/.test(url)) {
         return {
           ok: true,
           json: async () => ({
@@ -51,8 +65,12 @@ describe("App", () => {
                 current_price: null,
                 last_checked_at: null,
                 last_status: "pending",
+                archived_at: null,
               },
             ],
+            total: 1,
+            limit: 25,
+            offset: 0,
           }),
         };
       }
@@ -72,6 +90,20 @@ describe("App", () => {
 
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+
+      if (url.endsWith("/settings")) {
+        return {
+          ok: true,
+          json: async () => ({
+            notifications_enabled: false,
+            telegram_enabled: false,
+            check_interval_seconds: 1800,
+            playwright_fallback_enabled: false,
+            playwright_fallback_adapters: [],
+            log_level: "INFO",
+          }),
+        };
+      }
 
       if (url.includes("/watchlist/preview")) {
         return {
@@ -124,7 +156,7 @@ describe("App", () => {
         };
       }
 
-      if (url.endsWith("/watchlist")) {
+      if (/\/watchlist(\?|$)/.test(url)) {
         watchlistCalls += 1;
         return {
           ok: true,
@@ -140,12 +172,16 @@ describe("App", () => {
                       notes: null,
                       target_price: 50,
                       site_key: "amazon_nl",
-                      active: true,
-                      current_price: null,
-                      last_checked_at: null,
-                      last_status: "pending",
-                    },
-                  ],
+                        active: true,
+                        current_price: null,
+                        last_checked_at: null,
+                        last_status: "pending",
+                        archived_at: null,
+                      },
+                    ],
+              total: watchlistCalls === 1 ? 0 : 1,
+              limit: 25,
+              offset: 0,
           }),
         };
       }
@@ -174,8 +210,22 @@ describe("App", () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
 
-      if (url.endsWith("/watchlist")) {
-        return { ok: true, json: async () => ({ items: [] }) };
+      if (url.endsWith("/settings")) {
+        return {
+          ok: true,
+          json: async () => ({
+            notifications_enabled: false,
+            telegram_enabled: false,
+            check_interval_seconds: 1800,
+            playwright_fallback_enabled: false,
+            playwright_fallback_adapters: [],
+            log_level: "INFO",
+          }),
+        };
+      }
+
+      if (/\/watchlist(\?|$)/.test(url)) {
+        return { ok: true, json: async () => ({ items: [], total: 0, limit: 25, offset: 0 }) };
       }
 
       if (url.includes("/watchlist/preview")) {
@@ -211,6 +261,20 @@ describe("App", () => {
   it("navigates to detail page and updates fields", async () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+
+      if (url.endsWith("/settings")) {
+        return {
+          ok: true,
+          json: async () => ({
+            notifications_enabled: false,
+            telegram_enabled: false,
+            check_interval_seconds: 1800,
+            playwright_fallback_enabled: false,
+            playwright_fallback_adapters: [],
+            log_level: "INFO",
+          }),
+        };
+      }
 
       if (url.includes("/watchlist/1/history")) {
         return {
@@ -316,7 +380,7 @@ describe("App", () => {
         };
       }
 
-      if (url.endsWith("/watchlist")) {
+      if (/\/watchlist(\?|$)/.test(url)) {
         return {
           ok: true,
           json: async () => ({
@@ -332,8 +396,12 @@ describe("App", () => {
                 current_price: 24,
                 last_checked_at: "2026-04-05T10:00:00Z",
                 last_status: "ok",
+                archived_at: null,
               },
             ],
+            total: 1,
+            limit: 25,
+            offset: 0,
           }),
         };
       }
@@ -373,5 +441,183 @@ describe("App", () => {
     fireEvent.click(screen.getByText("Check now"));
     expect(await screen.findByText("Check queued for next worker tick.")).toBeTruthy();
     expect(await screen.findByText("target_reached")).toBeTruthy();
+  });
+
+  it("applies bulk archive action from overview", async () => {
+    let archived = false;
+
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith("/settings")) {
+        return {
+          ok: true,
+          json: async () => ({
+            notifications_enabled: false,
+            telegram_enabled: false,
+            check_interval_seconds: 1800,
+            playwright_fallback_enabled: false,
+            playwright_fallback_adapters: [],
+            log_level: "INFO",
+          }),
+        };
+      }
+
+      if (url.includes("/watchlist/1/history") || url.includes("/watchlist/2/history")) {
+        return {
+          ok: true,
+          json: async () => ({
+            item_id: url.includes("/watchlist/1/") ? 1 : 2,
+            site_key: "hema",
+            checks_count: 0,
+            latest_price: null,
+            lowest_price: null,
+            highest_price: null,
+            series: [],
+          }),
+        };
+      }
+
+      if (url.endsWith("/watchlist/bulk") && init?.method === "POST") {
+        archived = true;
+        return {
+          ok: true,
+          json: async () => ({ action: "archive", updated: 1, failed: [] }),
+        };
+      }
+
+      if (/\/watchlist(\?|$)/.test(url)) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: archived
+              ? [
+                  {
+                    id: 2,
+                    url: "https://hema.nl/product/2",
+                    custom_label: "Phone",
+                    notes: null,
+                    target_price: null,
+                    site_key: "hema",
+                    active: true,
+                    current_price: null,
+                    last_checked_at: null,
+                    last_status: "pending",
+                    archived_at: null,
+                  },
+                ]
+              : [
+                  {
+                    id: 1,
+                    url: "https://hema.nl/product/1",
+                    custom_label: "Lamp",
+                    notes: null,
+                    target_price: 20,
+                    site_key: "hema",
+                    active: true,
+                    current_price: null,
+                    last_checked_at: null,
+                    last_status: "pending",
+                    archived_at: null,
+                  },
+                  {
+                    id: 2,
+                    url: "https://hema.nl/product/2",
+                    custom_label: "Phone",
+                    notes: null,
+                    target_price: null,
+                    site_key: "hema",
+                    active: true,
+                    current_price: null,
+                    last_checked_at: null,
+                    last_status: "pending",
+                    archived_at: null,
+                  },
+                ],
+            total: archived ? 1 : 2,
+            limit: 25,
+            offset: 0,
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected URL ${url}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Lamp")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Select item 1"));
+    fireEvent.change(screen.getByLabelText("Bulk action"), { target: { value: "archive" } });
+    fireEvent.click(screen.getByText("Apply to selected (1)"));
+
+    expect(await screen.findByText("Bulk archive completed: 1 updated, 0 failed.")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.queryByText("Lamp")).toBeNull();
+      expect(screen.getByText("Phone")).toBeTruthy();
+    });
+  });
+
+  it("saves settings and applies dark mode preference", async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (/\/watchlist(\?|$)/.test(url)) {
+        return { ok: true, json: async () => ({ items: [], total: 0, limit: 25, offset: 0 }) };
+      }
+
+      if (url.endsWith("/settings") && !init?.method) {
+        return {
+          ok: true,
+          json: async () => ({
+            notifications_enabled: false,
+            telegram_enabled: false,
+            check_interval_seconds: 1800,
+            playwright_fallback_enabled: false,
+            playwright_fallback_adapters: [],
+            log_level: "INFO",
+          }),
+        };
+      }
+
+      if (url.endsWith("/settings") && init?.method === "PATCH") {
+        return {
+          ok: true,
+          json: async () => ({
+            notifications_enabled: true,
+            telegram_enabled: true,
+            check_interval_seconds: 900,
+            playwright_fallback_enabled: true,
+            playwright_fallback_adapters: ["amazon_nl"],
+            log_level: "DEBUG",
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected URL ${url}`);
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Open settings"));
+
+    fireEvent.click(screen.getByLabelText("Notifications enabled"));
+    fireEvent.click(screen.getByLabelText("Telegram channel enabled"));
+    fireEvent.change(screen.getByLabelText("Global check interval (seconds)"), {
+      target: { value: "900" },
+    });
+    fireEvent.click(screen.getByLabelText("Playwright fallback enabled"));
+    fireEvent.change(screen.getByLabelText("Playwright fallback adapters (comma-separated)"), {
+      target: { value: "amazon_nl" },
+    });
+    fireEvent.change(screen.getByLabelText("Log level"), { target: { value: "DEBUG" } });
+
+    fireEvent.change(screen.getByLabelText("Price display mode"), { target: { value: "code" } });
+    fireEvent.click(screen.getByLabelText("Dark mode"));
+
+    fireEvent.click(screen.getByText("Save settings"));
+
+    expect(await screen.findByText("Settings saved.")).toBeTruthy();
+    expect(document.documentElement.classList.contains("theme-dark")).toBe(true);
   });
 });

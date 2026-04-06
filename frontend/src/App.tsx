@@ -1,19 +1,71 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import {
+  archiveWatchItem,
+  bulkUpdateWatchItems,
+  fetchSettings,
   fetchWatchItemAlerts,
   fetchWatchItemDetail,
   fetchWatchItemHistory,
   fetchWatchlist,
+  patchSettings,
   patchWatchItem,
   previewWatchItemByUrl,
+  restoreWatchItem,
   triggerWatchItemCheckNow,
   upsertWatchItem,
   type AlertEvent,
+  type BulkWatchItemPayload,
   type WatchItem,
   type WatchItemDetailResponse,
   type WatchItemHistoryResponse,
   type WatchItemPreviewResponse,
 } from "./api/client";
+
+type CurrencyDisplayMode = "symbol" | "code";
+
+const UI_SETTINGS_STORAGE_KEY = "snipebot-ui-settings-v1";
+
+function loadUiSettings(): {
+  defaultHistoryDays: 7 | 30 | 90;
+  currencyDisplayMode: CurrencyDisplayMode;
+  darkMode: boolean;
+} {
+  try {
+    const raw = window.localStorage.getItem(UI_SETTINGS_STORAGE_KEY);
+    if (!raw) {
+      return { defaultHistoryDays: 30, currencyDisplayMode: "symbol", darkMode: false };
+    }
+
+    const parsed = JSON.parse(raw) as {
+      defaultHistoryDays?: number;
+      currencyDisplayMode?: string;
+      darkMode?: boolean;
+    };
+
+    const defaultHistoryDays = [7, 30, 90].includes(parsed.defaultHistoryDays ?? 30)
+      ? (parsed.defaultHistoryDays as 7 | 30 | 90)
+      : 30;
+    const currencyDisplayMode =
+      parsed.currencyDisplayMode === "code" || parsed.currencyDisplayMode === "symbol"
+        ? parsed.currencyDisplayMode
+        : "symbol";
+    return {
+      defaultHistoryDays,
+      currencyDisplayMode,
+      darkMode: Boolean(parsed.darkMode),
+    };
+  } catch {
+    return { defaultHistoryDays: 30, currencyDisplayMode: "symbol", darkMode: false };
+  }
+}
+
+function saveUiSettings(payload: {
+  defaultHistoryDays: 7 | 30 | 90;
+  currencyDisplayMode: CurrencyDisplayMode;
+  darkMode: boolean;
+}) {
+  window.localStorage.setItem(UI_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
+}
 
 function isHttpUrl(value: string): boolean {
   try {
@@ -24,9 +76,15 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
-function formatPrice(value: number | null | undefined): string {
+function formatPrice(
+  value: number | null | undefined,
+  currencyDisplayMode: CurrencyDisplayMode = "symbol",
+): string {
   if (value === null || value === undefined) {
     return "-";
+  }
+  if (currencyDisplayMode === "code") {
+    return `EUR ${value.toFixed(2)}`;
   }
   return `€ ${value.toFixed(2)}`;
 }
@@ -82,6 +140,7 @@ function TrendChart({
   className,
   interactive = false,
   daysWindow,
+  currencyDisplayMode = "symbol",
 }: {
   points: Array<{ checked_at: string; price: number }>;
   width: number;
@@ -89,6 +148,7 @@ function TrendChart({
   className?: string;
   interactive?: boolean;
   daysWindow?: number;
+  currencyDisplayMode?: CurrencyDisplayMode;
 }) {
   if (points.length < 2) {
     return <div className="mini-chart-empty">Not enough data</div>;
@@ -277,7 +337,7 @@ function TrendChart({
               y2={tick.y}
             />
             <text className="chart-axis-label" x={padding.left - 8} y={tick.y + 4} textAnchor="end">
-              {formatPrice(tick.value)}
+              {formatPrice(tick.value, currencyDisplayMode)}
             </text>
           </g>
         ))}
@@ -343,7 +403,7 @@ function TrendChart({
           data-testid="detail-chart-tooltip"
           style={{ left: `${tooltipLeft}px`, top: `${activePoint.y - 8}px` }}
         >
-          <strong>{formatPrice(activePoint.point.price)}</strong>
+          <strong>{formatPrice(activePoint.point.price, currencyDisplayMode)}</strong>
           <span>{formatDateTime(activePoint.point.checked_at)}</span>
         </div>
       ) : null}
@@ -352,6 +412,19 @@ function TrendChart({
 }
 
 type Route = { kind: "overview" } | { kind: "detail"; itemId: number };
+
+type SettingsFormState = {
+  notificationsEnabled: boolean;
+  telegramEnabled: boolean;
+  checkIntervalSeconds: string;
+  playwrightFallbackEnabled: boolean;
+  playwrightFallbackAdapters: string;
+  logLevel: "DEBUG" | "INFO" | "WARNING" | "ERROR";
+};
+
+type SortOption = "updated_desc" | "updated_asc" | "price_asc" | "price_desc";
+type TernaryFilter = "any" | "yes" | "no";
+type BulkAction = BulkWatchItemPayload["action"];
 
 function parseRoute(pathname: string): Route {
   const match = pathname.match(/^\/products\/(\d+)$/);
@@ -364,14 +437,18 @@ function parseRoute(pathname: string): Route {
 function ProductDetailPage({
   itemId,
   onNavigate,
+  currencyDisplayMode,
+  defaultHistoryDays,
 }: {
   itemId: number;
   onNavigate: (href: string) => void;
+  currencyDisplayMode: CurrencyDisplayMode;
+  defaultHistoryDays: 7 | 30 | 90;
 }) {
   const [detail, setDetail] = useState<WatchItemDetailResponse | null>(null);
   const [history, setHistory] = useState<WatchItemHistoryResponse | null>(null);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
-  const [days, setDays] = useState(30);
+  const [days, setDays] = useState<number>(defaultHistoryDays);
   const [label, setLabel] = useState("");
   const [targetPrice, setTargetPrice] = useState("");
   const [notes, setNotes] = useState("");
@@ -411,6 +488,10 @@ function ProductDetailPage({
   useEffect(() => {
     loadData().catch((err: Error) => setError(err.message));
   }, [itemId, days]);
+
+  useEffect(() => {
+    setDays(defaultHistoryDays);
+  }, [defaultHistoryDays]);
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -508,10 +589,11 @@ function ProductDetailPage({
                   className="detail-chart"
                   interactive
                   daysWindow={days}
+                  currencyDisplayMode={currencyDisplayMode}
                 />
                 <div className="muted">
-                  Latest: {formatPrice(history.latest_price)} · Lowest: {formatPrice(history.lowest_price)}
-                  {' '}· Highest: {formatPrice(history.highest_price)}
+                  Latest: {formatPrice(history.latest_price, currencyDisplayMode)} · Lowest: {formatPrice(history.lowest_price, currencyDisplayMode)}
+                  {' '}· Highest: {formatPrice(history.highest_price, currencyDisplayMode)}
                 </div>
               </>
             ) : (
@@ -524,7 +606,7 @@ function ProductDetailPage({
             <div className="snapshot-grid">
               <div>
                 <div className="muted">Current price</div>
-                <strong>{formatPrice(detail.item.current_price)}</strong>
+                <strong>{formatPrice(detail.item.current_price, currencyDisplayMode)}</strong>
               </div>
               <div>
                 <div className="muted">Last check</div>
@@ -536,15 +618,15 @@ function ProductDetailPage({
               </div>
               <div>
                 <div className="muted">7 day low</div>
-                <strong>{formatPrice(detail.lows.low_7d)}</strong>
+                <strong>{formatPrice(detail.lows.low_7d, currencyDisplayMode)}</strong>
               </div>
               <div>
                 <div className="muted">30 day low</div>
-                <strong>{formatPrice(detail.lows.low_30d)}</strong>
+                <strong>{formatPrice(detail.lows.low_30d, currencyDisplayMode)}</strong>
               </div>
               <div>
                 <div className="muted">All time low</div>
-                <strong>{formatPrice(detail.lows.all_time_low)}</strong>
+                <strong>{formatPrice(detail.lows.all_time_low, currencyDisplayMode)}</strong>
               </div>
             </div>
             <div className="muted">{detail.item.url}</div>
@@ -626,9 +708,9 @@ function ProductDetailPage({
                       <td>{formatDateTime(event.sent_at)}</td>
                       <td>{event.alert_kind}</td>
                       <td>{event.delivery_status}</td>
-                      <td>{formatPrice(event.old_price)}</td>
-                      <td>{formatPrice(event.new_price)}</td>
-                      <td>{formatPrice(event.target_price)}</td>
+                      <td>{formatPrice(event.old_price, currencyDisplayMode)}</td>
+                      <td>{formatPrice(event.new_price, currencyDisplayMode)}</td>
+                      <td>{formatPrice(event.target_price, currencyDisplayMode)}</td>
                       <td>{event.channel}</td>
                     </tr>
                   ))}
@@ -655,6 +737,32 @@ export function App() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [labelDirty, setLabelDirty] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
+  const [settingsForm, setSettingsForm] = useState<SettingsFormState | null>(null);
+  const [defaultHistoryDays, setDefaultHistoryDays] = useState<7 | 30 | 90>(
+    () => loadUiSettings().defaultHistoryDays,
+  );
+  const [currencyDisplayMode, setCurrencyDisplayMode] = useState<CurrencyDisplayMode>(
+    () => loadUiSettings().currencyDisplayMode,
+  );
+  const [darkMode, setDarkMode] = useState<boolean>(() => loadUiSettings().darkMode);
+  const [activeFilter, setActiveFilter] = useState<TernaryFilter>("any");
+  const [hasTargetFilter, setHasTargetFilter] = useState<TernaryFilter>("any");
+  const [siteKeyFilter, setSiteKeyFilter] = useState("");
+  const [searchFilter, setSearchFilter] = useState("");
+  const [sort, setSort] = useState<SortOption>("updated_desc");
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [archivedOnly, setArchivedOnly] = useState(false);
+  const [limit, setLimit] = useState(25);
+  const [offset, setOffset] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
+  const [bulkAction, setBulkAction] = useState<BulkAction>("pause");
+  const [bulkTargetPrice, setBulkTargetPrice] = useState("");
+  const [bulkWorking, setBulkWorking] = useState(false);
   const labelRef = useRef(customLabel);
   const labelDirtyRef = useRef(labelDirty);
 
@@ -677,9 +785,66 @@ export function App() {
     labelDirtyRef.current = labelDirty;
   }, [labelDirty]);
 
+  useEffect(() => {
+    document.documentElement.classList.toggle("theme-dark", darkMode);
+  }, [darkMode]);
+
+  useEffect(() => {
+    saveUiSettings({
+      defaultHistoryDays,
+      currencyDisplayMode,
+      darkMode,
+    });
+  }, [defaultHistoryDays, currencyDisplayMode, darkMode]);
+
+  useEffect(() => {
+    const loadBackendSettings = async () => {
+      setSettingsLoading(true);
+      setSettingsError(null);
+      try {
+        const payload = await fetchSettings();
+        setSettingsForm({
+          notificationsEnabled: payload.notifications_enabled,
+          telegramEnabled: payload.telegram_enabled,
+          checkIntervalSeconds: String(payload.check_interval_seconds),
+          playwrightFallbackEnabled: payload.playwright_fallback_enabled,
+          playwrightFallbackAdapters: payload.playwright_fallback_adapters.join(", "),
+          logLevel: payload.log_level,
+        });
+      } catch (err) {
+        setSettingsError((err as Error).message);
+      } finally {
+        setSettingsLoading(false);
+      }
+    };
+
+    loadBackendSettings().catch((err: Error) => setSettingsError(err.message));
+  }, []);
+
   async function loadWatchlist() {
-    const response = await fetchWatchlist();
+    const response = await fetchWatchlist({
+      active:
+        activeFilter === "any"
+          ? undefined
+          : activeFilter === "yes"
+            ? true
+            : false,
+      has_target:
+        hasTargetFilter === "any"
+          ? undefined
+          : hasTargetFilter === "yes"
+            ? true
+            : false,
+      site_key: siteKeyFilter.trim() || undefined,
+      q: searchFilter.trim() || undefined,
+      sort,
+      limit,
+      offset,
+      include_archived: includeArchived,
+      archived_only: archivedOnly,
+    });
     setItems(response.items);
+    setTotal(response.total);
 
     const loadedHistories = await Promise.all(
       response.items.map(async (item) => {
@@ -705,7 +870,27 @@ export function App() {
 
   useEffect(() => {
     loadWatchlist().catch((err: Error) => setError(err.message));
-  }, []);
+  }, [
+    activeFilter,
+    hasTargetFilter,
+    siteKeyFilter,
+    searchFilter,
+    sort,
+    limit,
+    offset,
+    includeArchived,
+    archivedOnly,
+  ]);
+
+  useEffect(() => {
+    setSelectedItemIds((previous) =>
+      previous.filter((itemId) => items.some((item) => item.id === itemId)),
+    );
+  }, [items]);
+
+  useEffect(() => {
+    setOffset(0);
+  }, [activeFilter, hasTargetFilter, siteKeyFilter, searchFilter, sort, limit, includeArchived, archivedOnly]);
 
   useEffect(() => {
     const candidateUrl = url.trim();
@@ -786,13 +971,295 @@ export function App() {
     }
   }
 
+  function setSettingsFormField<K extends keyof SettingsFormState>(key: K, value: SettingsFormState[K]) {
+    setSettingsForm((previous) => {
+      if (!previous) {
+        return previous;
+      }
+      return { ...previous, [key]: value };
+    });
+  }
+
+  async function handleSaveSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSettingsError(null);
+    setSettingsFeedback(null);
+
+    if (!settingsForm) {
+      setSettingsError("Settings not loaded yet.");
+      return;
+    }
+
+    const parsedCheckInterval = Number(settingsForm.checkIntervalSeconds);
+    if (
+      Number.isNaN(parsedCheckInterval) ||
+      parsedCheckInterval < 30 ||
+      parsedCheckInterval > 86400
+    ) {
+      setSettingsError("Check interval must be between 30 and 86400 seconds.");
+      return;
+    }
+
+    try {
+      const payload = await patchSettings({
+        notifications_enabled: settingsForm.notificationsEnabled,
+        telegram_enabled: settingsForm.telegramEnabled,
+        check_interval_seconds: parsedCheckInterval,
+        playwright_fallback_enabled: settingsForm.playwrightFallbackEnabled,
+        playwright_fallback_adapters: settingsForm.playwrightFallbackAdapters
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean),
+        log_level: settingsForm.logLevel,
+      });
+
+      setSettingsForm({
+        notificationsEnabled: payload.notifications_enabled,
+        telegramEnabled: payload.telegram_enabled,
+        checkIntervalSeconds: String(payload.check_interval_seconds),
+        playwrightFallbackEnabled: payload.playwright_fallback_enabled,
+        playwrightFallbackAdapters: payload.playwright_fallback_adapters.join(", "),
+        logLevel: payload.log_level,
+      });
+
+      setSettingsFeedback("Settings saved.");
+    } catch (err) {
+      setSettingsError((err as Error).message);
+    }
+  }
+
+  function toggleSelected(itemId: number) {
+    setSelectedItemIds((previous) =>
+      previous.includes(itemId)
+        ? previous.filter((id) => id !== itemId)
+        : [...previous, itemId],
+    );
+  }
+
+  function toggleSelectedPage(checked: boolean) {
+    if (checked) {
+      setSelectedItemIds(items.map((item) => item.id));
+      return;
+    }
+    setSelectedItemIds([]);
+  }
+
+  async function handleBulkApply() {
+    if (selectedItemIds.length === 0) {
+      setError("Select at least one watch item first.");
+      return;
+    }
+
+    setBulkWorking(true);
+    setError(null);
+    setFeedback(null);
+
+    try {
+      const payload: BulkWatchItemPayload = {
+        item_ids: selectedItemIds,
+        action: bulkAction,
+      };
+
+      if (bulkAction === "set_target") {
+        const trimmed = bulkTargetPrice.trim();
+        if (!trimmed) {
+          payload.target_price = null;
+        } else {
+          const parsedTarget = Number(trimmed);
+          if (Number.isNaN(parsedTarget) || parsedTarget <= 0) {
+            setError("Bulk target price must be a positive number or empty to clear.");
+            return;
+          }
+          payload.target_price = parsedTarget;
+        }
+      }
+
+      const result = await bulkUpdateWatchItems(payload);
+      await loadWatchlist();
+      setSelectedItemIds([]);
+      setFeedback(
+        `Bulk ${result.action} completed: ${result.updated} updated, ${result.failed.length} failed.`,
+      );
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBulkWorking(false);
+    }
+  }
+
+  async function handleArchiveToggle(item: WatchItem) {
+    setError(null);
+    setFeedback(null);
+
+    try {
+      if (item.archived_at) {
+        await restoreWatchItem(item.id);
+        setFeedback("Item restored.");
+      } else {
+        await archiveWatchItem(item.id);
+        setFeedback("Item archived.");
+      }
+      await loadWatchlist();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  const allOnPageSelected =
+    items.length > 0 && items.every((item) => selectedItemIds.includes(item.id));
+  const hasPreviousPage = offset > 0;
+  const hasNextPage = offset + items.length < total;
+
   if (route.kind === "detail") {
-    return <ProductDetailPage itemId={route.itemId} onNavigate={navigate} />;
+    return (
+      <ProductDetailPage
+        itemId={route.itemId}
+        onNavigate={navigate}
+        currencyDisplayMode={currencyDisplayMode}
+        defaultHistoryDays={defaultHistoryDays}
+      />
+    );
   }
 
   return (
     <main className="container">
       <h1>SnipeBot Watchlist</h1>
+
+      <section className="panel">
+        <div className="settings-header">
+          <h2>Settings</h2>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setSettingsOpen((previous) => !previous)}
+          >
+            {settingsOpen ? "Hide settings" : "Open settings"}
+          </button>
+        </div>
+        {settingsOpen ? (
+          settingsLoading || !settingsForm ? (
+            <p className="muted">Loading settings…</p>
+          ) : (
+            <form className="settings-form" onSubmit={handleSaveSettings}>
+              <h3>Backend settings</h3>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={settingsForm.notificationsEnabled}
+                  onChange={(event) =>
+                    setSettingsFormField("notificationsEnabled", event.target.checked)
+                  }
+                />
+                Notifications enabled
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={settingsForm.telegramEnabled}
+                  onChange={(event) => setSettingsFormField("telegramEnabled", event.target.checked)}
+                />
+                Telegram channel enabled
+              </label>
+              <label>
+                Global check interval (seconds)
+                <input
+                  type="number"
+                  min="30"
+                  max="86400"
+                  value={settingsForm.checkIntervalSeconds}
+                  onChange={(event) =>
+                    setSettingsFormField("checkIntervalSeconds", event.target.value)
+                  }
+                />
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={settingsForm.playwrightFallbackEnabled}
+                  onChange={(event) =>
+                    setSettingsFormField("playwrightFallbackEnabled", event.target.checked)
+                  }
+                />
+                Playwright fallback enabled
+              </label>
+              <label>
+                Playwright fallback adapters (comma-separated)
+                <input
+                  type="text"
+                  placeholder="amazon_nl, hema"
+                  value={settingsForm.playwrightFallbackAdapters}
+                  onChange={(event) =>
+                    setSettingsFormField("playwrightFallbackAdapters", event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Log level
+                <select
+                  value={settingsForm.logLevel}
+                  onChange={(event) =>
+                    setSettingsFormField(
+                      "logLevel",
+                      event.target.value as SettingsFormState["logLevel"],
+                    )
+                  }
+                >
+                  <option value="DEBUG">DEBUG</option>
+                  <option value="INFO">INFO</option>
+                  <option value="WARNING">WARNING</option>
+                  <option value="ERROR">ERROR</option>
+                </select>
+              </label>
+
+              <h3>UI preferences</h3>
+              <label>
+                Default history window
+                <select
+                  value={String(defaultHistoryDays)}
+                  onChange={(event) => setDefaultHistoryDays(Number(event.target.value) as 7 | 30 | 90)}
+                >
+                  <option value="7">7 days</option>
+                  <option value="30">30 days</option>
+                  <option value="90">90 days</option>
+                </select>
+              </label>
+              <label>
+                Price display mode
+                <select
+                  value={currencyDisplayMode}
+                  onChange={(event) =>
+                    setCurrencyDisplayMode(event.target.value as CurrencyDisplayMode)
+                  }
+                >
+                  <option value="symbol">€ 39.99</option>
+                  <option value="code">EUR 39.99</option>
+                </select>
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={darkMode}
+                  onChange={(event) => setDarkMode(event.target.checked)}
+                />
+                Dark mode
+              </label>
+
+              <div className="actions-row">
+                <button type="submit">Save settings</button>
+              </div>
+
+              <p className="muted">
+                Note: scheduler/runtime settings (interval, log level, fallback behavior) may require
+                service restart to fully apply.
+              </p>
+            </form>
+          )
+        ) : (
+          <p className="muted">Use settings to configure notifications, scraping fallback, UI defaults and theme.</p>
+        )}
+        {settingsError && <p className="error">{settingsError}</p>}
+        {settingsFeedback && <p className="success">{settingsFeedback}</p>}
+      </section>
 
       <section className="panel compact-form">
         <h2>Add Product</h2>
@@ -838,7 +1305,7 @@ export function App() {
           <div className="preview-card">
             <strong>{preview.title}</strong>
             <div className="muted">
-              Site: {preview.site_key} · Price: {formatPrice(preview.current_price)} ·
+              Site: {preview.site_key} · Price: {formatPrice(preview.current_price, currencyDisplayMode)} ·
               Availability: {preview.availability}
             </div>
           </div>
@@ -850,12 +1317,147 @@ export function App() {
 
       <section className="panel">
         <h2>Watchlist Overview</h2>
+        <div className="grid">
+          <label>
+            Search
+            <input
+              type="text"
+              placeholder="label or URL"
+              value={searchFilter}
+              onChange={(event) => setSearchFilter(event.target.value)}
+            />
+          </label>
+          <label>
+            Active
+            <select
+              value={activeFilter}
+              onChange={(event) => setActiveFilter(event.target.value as TernaryFilter)}
+            >
+              <option value="any">Any</option>
+              <option value="yes">Active</option>
+              <option value="no">Inactive</option>
+            </select>
+          </label>
+          <label>
+            Has target
+            <select
+              value={hasTargetFilter}
+              onChange={(event) => setHasTargetFilter(event.target.value as TernaryFilter)}
+            >
+              <option value="any">Any</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </label>
+          <label>
+            Site key
+            <input
+              type="text"
+              placeholder="hema"
+              value={siteKeyFilter}
+              onChange={(event) => setSiteKeyFilter(event.target.value)}
+            />
+          </label>
+          <label>
+            Sort
+            <select value={sort} onChange={(event) => setSort(event.target.value as SortOption)}>
+              <option value="updated_desc">Updated (newest)</option>
+              <option value="updated_asc">Updated (oldest)</option>
+              <option value="price_asc">Current price (low-high)</option>
+              <option value="price_desc">Current price (high-low)</option>
+            </select>
+          </label>
+          <label>
+            Page size
+            <select value={String(limit)} onChange={(event) => setLimit(Number(event.target.value))}>
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="actions-row">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={includeArchived}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setIncludeArchived(checked);
+                if (!checked) {
+                  setArchivedOnly(false);
+                }
+              }}
+            />
+            Include archived
+          </label>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={archivedOnly}
+              disabled={!includeArchived}
+              onChange={(event) => setArchivedOnly(event.target.checked)}
+            />
+            Archived only
+          </label>
+          <span className="muted">
+            Showing {items.length} of {total}
+          </span>
+        </div>
+
+        <div className="actions-row">
+          <label>
+            Bulk action
+            <select
+              value={bulkAction}
+              onChange={(event) => setBulkAction(event.target.value as BulkAction)}
+            >
+              <option value="pause">Pause</option>
+              <option value="resume">Resume</option>
+              <option value="archive">Archive</option>
+              <option value="set_target">Set target</option>
+            </select>
+          </label>
+          {bulkAction === "set_target" ? (
+            <label>
+              Target price
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={bulkTargetPrice}
+                onChange={(event) => setBulkTargetPrice(event.target.value)}
+                placeholder="empty = clear"
+              />
+            </label>
+          ) : null}
+          <button
+            type="button"
+            className="secondary"
+            disabled={bulkWorking || selectedItemIds.length === 0}
+            onClick={() => {
+              void handleBulkApply();
+            }}
+          >
+            {bulkWorking ? "Applying..." : `Apply to selected (${selectedItemIds.length})`}
+          </button>
+        </div>
+
         {items.length === 0 ? (
           <p>No watched items yet.</p>
         ) : (
           <table>
             <thead>
               <tr>
+                <th>
+                  <input
+                    type="checkbox"
+                    checked={allOnPageSelected}
+                    onChange={(event) => toggleSelectedPage(event.target.checked)}
+                    aria-label="Select all on page"
+                  />
+                </th>
                 <th>Product</th>
                 <th>Site</th>
                 <th>Target</th>
@@ -864,11 +1466,21 @@ export function App() {
                 <th>Last check</th>
                 <th>Status</th>
                 <th>Active</th>
+                <th>Archived</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {items.map((item) => (
                 <tr key={item.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selectedItemIds.includes(item.id)}
+                      onChange={() => toggleSelected(item.id)}
+                      aria-label={`Select item ${item.id}`}
+                    />
+                  </td>
                   <td>
                     <strong>
                       <a
@@ -884,21 +1496,26 @@ export function App() {
                     <div className="muted">{item.url}</div>
                   </td>
                   <td>{item.site_key}</td>
-                  <td>{formatPrice(item.target_price)}</td>
-                  <td>{formatPrice(item.current_price)}</td>
+                  <td>{formatPrice(item.target_price, currencyDisplayMode)}</td>
+                  <td>{formatPrice(item.current_price, currencyDisplayMode)}</td>
                   <td>
                     {histories[item.id]?.checks_count ? (
                       <div className="insights">
                         <div className="insight-row">
-                          <span>L:</span> {formatPrice(histories[item.id].latest_price)}
+                          <span>L:</span> {formatPrice(histories[item.id].latest_price, currencyDisplayMode)}
                         </div>
                         <div className="insight-row">
-                          <span>Lo:</span> {formatPrice(histories[item.id].lowest_price)}
+                          <span>Lo:</span> {formatPrice(histories[item.id].lowest_price, currencyDisplayMode)}
                         </div>
                         <div className="insight-row">
-                          <span>Hi:</span> {formatPrice(histories[item.id].highest_price)}
+                          <span>Hi:</span> {formatPrice(histories[item.id].highest_price, currencyDisplayMode)}
                         </div>
-                        <TrendChart points={histories[item.id].series} width={180} height={56} />
+                        <TrendChart
+                          points={histories[item.id].series}
+                          width={180}
+                          height={56}
+                          currencyDisplayMode={currencyDisplayMode}
+                        />
                       </div>
                     ) : (
                       <span className="muted">-</span>
@@ -907,11 +1524,44 @@ export function App() {
                   <td>{item.last_checked_at ?? "-"}</td>
                   <td>{item.last_status}</td>
                   <td>{item.active ? "yes" : "no"}</td>
+                  <td>{item.archived_at ? "yes" : "no"}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => {
+                        void handleArchiveToggle(item);
+                      }}
+                    >
+                      {item.archived_at ? "Restore" : "Archive"}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
+        <div className="actions-row">
+          <button
+            type="button"
+            className="secondary"
+            disabled={!hasPreviousPage}
+            onClick={() => setOffset((previous) => Math.max(previous - limit, 0))}
+          >
+            Previous
+          </button>
+          <span className="muted">
+            Page {Math.floor(offset / limit) + 1} / {Math.max(1, Math.ceil(total / limit))}
+          </span>
+          <button
+            type="button"
+            className="secondary"
+            disabled={!hasNextPage}
+            onClick={() => setOffset((previous) => previous + limit)}
+          >
+            Next
+          </button>
+        </div>
       </section>
     </main>
   );

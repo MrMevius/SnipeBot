@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from snipebot.adapters.sites.base import AdapterCheckResult, ParsedProductData
 from snipebot.api import watchlist as watchlist_api
+from snipebot.core.config import get_settings
 from snipebot.main import app
 from snipebot.persistence.db import get_engine, init_db
 
@@ -12,6 +13,7 @@ from snipebot.persistence.db import get_engine, init_db
 def _reset_watch_items() -> None:
     init_db()
     with get_engine().begin() as connection:
+        connection.execute(text("DELETE FROM app_settings"))
         connection.execute(text("DELETE FROM alert_events"))
         connection.execute(text("DELETE FROM price_checks"))
         connection.execute(text("DELETE FROM watch_items"))
@@ -372,3 +374,173 @@ def test_watch_item_check_now_and_alert_history() -> None:
     assert len(history_payload["events"]) == 1
     assert history_payload["events"][0]["alert_kind"] == "target_reached"
     assert history_payload["events"][0]["delivery_status"] == "sent"
+
+
+def test_watchlist_supports_filters_and_pagination() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    first = client.post(
+        "/watchlist",
+        json={
+            "url": "https://www.hema.nl/p/alpha",
+            "custom_label": "Alpha",
+            "target_price": 10,
+        },
+    )
+    second = client.post(
+        "/watchlist",
+        json={
+            "url": "https://www.hema.nl/p/beta",
+            "custom_label": "Beta",
+        },
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    beta_id = second.json()["item"]["id"]
+    deactivate = client.patch(f"/watchlist/{beta_id}/deactivate")
+    assert deactivate.status_code == 200
+
+    filtered = client.get(
+        "/watchlist",
+        params={"active": "false", "has_target": "false", "q": "beta"},
+    )
+    assert filtered.status_code == 200
+    payload = filtered.json()
+    assert payload["total"] == 1
+    assert payload["limit"] == 50
+    assert payload["offset"] == 0
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["custom_label"] == "Beta"
+
+    paged = client.get(
+        "/watchlist", params={"limit": 1, "offset": 0, "sort": "updated_desc"}
+    )
+    assert paged.status_code == 200
+    paged_payload = paged.json()
+    assert paged_payload["total"] == 2
+    assert paged_payload["limit"] == 1
+    assert paged_payload["offset"] == 0
+    assert len(paged_payload["items"]) == 1
+
+
+def test_watchlist_bulk_archive_and_restore_flow() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    first = client.post(
+        "/watchlist",
+        json={
+            "url": "https://www.hema.nl/p/archive-a",
+            "custom_label": "Archive A",
+        },
+    )
+    second = client.post(
+        "/watchlist",
+        json={
+            "url": "https://www.hema.nl/p/archive-b",
+            "custom_label": "Archive B",
+        },
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_id = first.json()["item"]["id"]
+    second_id = second.json()["item"]["id"]
+
+    bulk_archive = client.post(
+        "/watchlist/bulk",
+        json={
+            "item_ids": [first_id, second_id],
+            "action": "archive",
+        },
+    )
+    assert bulk_archive.status_code == 200
+    archive_payload = bulk_archive.json()
+    assert archive_payload["updated"] == 2
+    assert archive_payload["failed"] == []
+
+    visible = client.get("/watchlist")
+    assert visible.status_code == 200
+    assert visible.json()["items"] == []
+
+    archived = client.get(
+        "/watchlist", params={"include_archived": "true", "archived_only": "true"}
+    )
+    assert archived.status_code == 200
+    archived_items = archived.json()["items"]
+    assert len(archived_items) == 2
+    assert all(item["archived_at"] is not None for item in archived_items)
+
+    restored = client.post(f"/watchlist/{first_id}/restore")
+    assert restored.status_code == 200
+    assert restored.json()["archived_at"] is None
+
+    visible_after_restore = client.get("/watchlist")
+    assert visible_after_restore.status_code == 200
+    visible_items = visible_after_restore.json()["items"]
+    assert len(visible_items) == 1
+    assert visible_items[0]["id"] == first_id
+
+
+def test_settings_get_defaults_and_patch_persists() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    defaults = client.get("/settings")
+    assert defaults.status_code == 200
+    defaults_payload = defaults.json()
+    runtime_defaults = get_settings()
+    assert (
+        defaults_payload["notifications_enabled"]
+        is runtime_defaults.notifications_enabled
+    )
+    assert defaults_payload["telegram_enabled"] is runtime_defaults.telegram_enabled
+    assert (
+        defaults_payload["check_interval_seconds"]
+        == runtime_defaults.check_interval_seconds
+    )
+    assert (
+        defaults_payload["playwright_fallback_enabled"]
+        is runtime_defaults.playwright_fallback_enabled
+    )
+    assert defaults_payload["playwright_fallback_adapters"] == [
+        entry.strip()
+        for entry in runtime_defaults.playwright_fallback_adapters.split(",")
+        if entry.strip()
+    ]
+    assert defaults_payload["log_level"] == runtime_defaults.log_level.upper()
+
+    patched = client.patch(
+        "/settings",
+        json={
+            "notifications_enabled": True,
+            "telegram_enabled": True,
+            "check_interval_seconds": 900,
+            "playwright_fallback_enabled": True,
+            "playwright_fallback_adapters": ["amazon_nl", "hema"],
+            "log_level": "debug",
+        },
+    )
+    assert patched.status_code == 200
+    patched_payload = patched.json()
+    assert patched_payload["notifications_enabled"] is True
+    assert patched_payload["telegram_enabled"] is True
+    assert patched_payload["check_interval_seconds"] == 900
+    assert patched_payload["playwright_fallback_enabled"] is True
+    assert patched_payload["playwright_fallback_adapters"] == ["amazon_nl", "hema"]
+    assert patched_payload["log_level"] == "DEBUG"
+
+    persisted = client.get("/settings")
+    assert persisted.status_code == 200
+    assert persisted.json() == patched_payload
+
+
+def test_settings_patch_rejects_invalid_log_level() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    response = client.patch("/settings", json={"log_level": "TRACE"})
+
+    assert response.status_code == 422
+    assert "log_level must be one of" in response.json()["detail"]

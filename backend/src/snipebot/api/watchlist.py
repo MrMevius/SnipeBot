@@ -8,11 +8,14 @@ from sqlalchemy.orm import Session
 from snipebot.adapters.sites.registry import detect_site_key, get_adapter
 from snipebot.core.config import get_settings
 from snipebot.domain.services import (
+    archive_watch_item,
+    bulk_update_watch_items,
+    restore_watch_item,
     get_watch_item_lows,
     deactivate_watch_item,
     get_watch_item_price_history,
     list_watch_item_alert_events,
-    list_watch_items,
+    list_watch_items_paginated,
     normalize_product_url,
     trigger_watch_item_check_now,
     update_watch_item,
@@ -41,10 +44,14 @@ class WatchItemResponse(BaseModel):
     current_price: float | None
     last_checked_at: datetime | None
     last_status: str
+    archived_at: datetime | None
 
 
 class WatchlistResponse(BaseModel):
     items: list[WatchItemResponse]
+    total: int
+    limit: int
+    offset: int
 
 
 class UpsertWatchItemResponse(BaseModel):
@@ -117,6 +124,23 @@ class AlertHistoryResponse(BaseModel):
     events: list[AlertEventResponse]
 
 
+class BulkWatchItemRequest(BaseModel):
+    item_ids: list[int] = Field(min_length=1)
+    action: str
+    target_price: Decimal | None = Field(default=None, gt=0)
+
+
+class BulkWatchItemFailure(BaseModel):
+    item_id: int
+    reason: str
+
+
+class BulkWatchItemResponse(BaseModel):
+    action: str
+    updated: int
+    failed: list[BulkWatchItemFailure]
+
+
 def _money_to_float(value: Decimal | None) -> float | None:
     if value is None:
         return None
@@ -135,6 +159,7 @@ def _to_response(item: WatchItem) -> WatchItemResponse:
         current_price=_money_to_float(item.current_price),
         last_checked_at=item.last_checked_at,
         last_status=item.last_status,
+        archived_at=item.archived_at,
     )
 
 
@@ -158,9 +183,71 @@ def create_or_update_watch_item(
 
 
 @router.get("", response_model=WatchlistResponse)
-def get_watchlist(db_session: Session = Depends(get_db_session)) -> WatchlistResponse:
-    items = list_watch_items(db_session, owner_id="local")
-    return WatchlistResponse(items=[_to_response(item) for item in items])
+def get_watchlist(
+    active: bool | None = None,
+    site_key: str | None = Query(default=None, max_length=64),
+    has_target: bool | None = None,
+    q: str | None = Query(default=None, max_length=255),
+    sort: str = Query(default="updated_desc", max_length=32),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    include_archived: bool = False,
+    archived_only: bool = False,
+    db_session: Session = Depends(get_db_session),
+) -> WatchlistResponse:
+    items, total, safe_limit, safe_offset = list_watch_items_paginated(
+        db_session,
+        owner_id="local",
+        active=active,
+        site_key=site_key,
+        has_target=has_target,
+        query=q,
+        sort=sort,
+        limit=limit,
+        offset=offset,
+        include_archived=include_archived,
+        archived_only=archived_only,
+    )
+    return WatchlistResponse(
+        items=[_to_response(item) for item in items],
+        total=total,
+        limit=safe_limit,
+        offset=safe_offset,
+    )
+
+
+@router.post("/bulk", response_model=BulkWatchItemResponse)
+def bulk_watch_items(
+    payload: BulkWatchItemRequest,
+    db_session: Session = Depends(get_db_session),
+) -> BulkWatchItemResponse:
+    if payload.action not in {"pause", "resume", "archive", "set_target"}:
+        raise HTTPException(status_code=422, detail="Unsupported bulk action")
+
+    if (
+        payload.action == "set_target"
+        and "target_price" not in payload.model_fields_set
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="target_price is required for set_target",
+        )
+
+    updated, failed = bulk_update_watch_items(
+        db_session,
+        owner_id="local",
+        item_ids=payload.item_ids,
+        action=payload.action,
+        target_price=payload.target_price,
+    )
+    return BulkWatchItemResponse(
+        action=payload.action,
+        updated=updated,
+        failed=[
+            BulkWatchItemFailure(item_id=item_id, reason=reason)
+            for item_id, reason in failed
+        ],
+    )
 
 
 @router.get("/preview", response_model=WatchItemPreviewResponse)
@@ -301,6 +388,26 @@ def deactivate_item(
     item_id: int, db_session: Session = Depends(get_db_session)
 ) -> WatchItemResponse:
     item = deactivate_watch_item(db_session, owner_id="local", item_id=item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Watch item not found")
+    return _to_response(item)
+
+
+@router.post("/{item_id}/archive", response_model=WatchItemResponse)
+def archive_item(
+    item_id: int, db_session: Session = Depends(get_db_session)
+) -> WatchItemResponse:
+    item = archive_watch_item(db_session, owner_id="local", item_id=item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Watch item not found")
+    return _to_response(item)
+
+
+@router.post("/{item_id}/restore", response_model=WatchItemResponse)
+def restore_item(
+    item_id: int, db_session: Session = Depends(get_db_session)
+) -> WatchItemResponse:
+    item = restore_watch_item(db_session, owner_id="local", item_id=item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Watch item not found")
     return _to_response(item)

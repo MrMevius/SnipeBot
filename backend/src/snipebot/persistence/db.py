@@ -77,3 +77,8 @@ def _ensure_legacy_columns() -> None:
 
         if "notes" not in existing_columns:
             connection.execute(text("ALTER TABLE watch_items ADD COLUMN notes TEXT"))
+
+        if "archived_at" not in existing_columns:
+            connection.execute(
+                text("ALTER TABLE watch_items ADD COLUMN archived_at DATETIME")
+            )

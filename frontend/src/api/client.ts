@@ -11,10 +11,26 @@ export type WatchItem = {
   current_price: number | null;
   last_checked_at: string | null;
   last_status: string;
+  archived_at: string | null;
 };
 
 export type WatchlistResponse = {
   items: WatchItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type WatchlistQuery = {
+  active?: boolean;
+  site_key?: string;
+  has_target?: boolean;
+  q?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+  include_archived?: boolean;
+  archived_only?: boolean;
 };
 
 export type UpsertWatchItemPayload = {
@@ -93,6 +109,41 @@ export type AlertHistoryResponse = {
   events: AlertEvent[];
 };
 
+export type BulkWatchItemPayload = {
+  item_ids: number[];
+  action: "pause" | "resume" | "archive" | "set_target";
+  target_price?: number | null;
+};
+
+export type BulkWatchItemFailure = {
+  item_id: number;
+  reason: string;
+};
+
+export type BulkWatchItemResponse = {
+  action: string;
+  updated: number;
+  failed: BulkWatchItemFailure[];
+};
+
+export type BackendSettings = {
+  notifications_enabled: boolean;
+  telegram_enabled: boolean;
+  check_interval_seconds: number;
+  playwright_fallback_enabled: boolean;
+  playwright_fallback_adapters: string[];
+  log_level: "DEBUG" | "INFO" | "WARNING" | "ERROR";
+};
+
+export type BackendSettingsUpdatePayload = {
+  notifications_enabled?: boolean;
+  telegram_enabled?: boolean;
+  check_interval_seconds?: number;
+  playwright_fallback_enabled?: boolean;
+  playwright_fallback_adapters?: string[];
+  log_level?: string;
+};
+
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let detail = `Request failed with ${response.status}`;
@@ -110,8 +161,26 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function fetchWatchlist(): Promise<WatchlistResponse> {
-  const response = await fetch(`${API_BASE_URL}/watchlist`);
+export async function fetchWatchlist(query: WatchlistQuery = {}): Promise<WatchlistResponse> {
+  const params = new URLSearchParams();
+  if (query.active !== undefined) params.set("active", String(query.active));
+  if (query.site_key) params.set("site_key", query.site_key);
+  if (query.has_target !== undefined) params.set("has_target", String(query.has_target));
+  if (query.q) params.set("q", query.q);
+  if (query.sort) params.set("sort", query.sort);
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
+  if (query.offset !== undefined) params.set("offset", String(query.offset));
+  if (query.include_archived !== undefined) {
+    params.set("include_archived", String(query.include_archived));
+  }
+  if (query.archived_only !== undefined) {
+    params.set("archived_only", String(query.archived_only));
+  }
+
+  const queryString = params.toString();
+  const response = await fetch(
+    queryString ? `${API_BASE_URL}/watchlist?${queryString}` : `${API_BASE_URL}/watchlist`,
+  );
   return parseResponse<WatchlistResponse>(response);
 }
 
@@ -186,4 +255,49 @@ export async function fetchWatchItemAlerts(
     `${API_BASE_URL}/watchlist/${itemId}/alerts?${query.toString()}`,
   );
   return parseResponse<AlertHistoryResponse>(response);
+}
+
+export async function bulkUpdateWatchItems(
+  payload: BulkWatchItemPayload,
+): Promise<BulkWatchItemResponse> {
+  const response = await fetch(`${API_BASE_URL}/watchlist/bulk`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<BulkWatchItemResponse>(response);
+}
+
+export async function archiveWatchItem(itemId: number): Promise<WatchItem> {
+  const response = await fetch(`${API_BASE_URL}/watchlist/${itemId}/archive`, {
+    method: "POST",
+  });
+  return parseResponse<WatchItem>(response);
+}
+
+export async function restoreWatchItem(itemId: number): Promise<WatchItem> {
+  const response = await fetch(`${API_BASE_URL}/watchlist/${itemId}/restore`, {
+    method: "POST",
+  });
+  return parseResponse<WatchItem>(response);
+}
+
+export async function fetchSettings(): Promise<BackendSettings> {
+  const response = await fetch(`${API_BASE_URL}/settings`);
+  return parseResponse<BackendSettings>(response);
+}
+
+export async function patchSettings(
+  payload: BackendSettingsUpdatePayload,
+): Promise<BackendSettings> {
+  const response = await fetch(`${API_BASE_URL}/settings`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<BackendSettings>(response);
 }

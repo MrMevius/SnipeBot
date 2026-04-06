@@ -45,6 +45,9 @@ class WatchItem(Base):
     next_check_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     last_error_kind: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
     check_count: Mapped[int] = mapped_column(nullable=False, default=0)
@@ -126,3 +129,16 @@ class AlertEvent(Base):
 
     watch_item: Mapped[WatchItem] = relationship(back_populates="alert_events")
     price_check: Mapped[PriceCheck] = relationship(back_populates="alert_events")
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )

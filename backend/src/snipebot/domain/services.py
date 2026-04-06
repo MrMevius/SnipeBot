@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from snipebot.adapters.sites.registry import detect_site_key
@@ -80,6 +80,7 @@ def upsert_watch_item(
         existing.target_price = target_price
         existing.site_key = site_key
         existing.active = True
+        existing.archived_at = None
         if existing.next_check_at is None:
             existing.next_check_at = datetime.now(UTC)
         db_session.commit()
@@ -104,12 +105,168 @@ def upsert_watch_item(
 
 
 def list_watch_items(db_session: Session, *, owner_id: str) -> list[WatchItem]:
-    statement = (
-        select(WatchItem)
-        .where(WatchItem.owner_id == owner_id)
-        .order_by(WatchItem.updated_at.desc(), WatchItem.id.desc())
+    items, _, _, _ = list_watch_items_paginated(
+        db_session,
+        owner_id=owner_id,
     )
-    return list(db_session.scalars(statement).all())
+    return items
+
+
+def list_watch_items_paginated(
+    db_session: Session,
+    *,
+    owner_id: str,
+    active: bool | None = None,
+    site_key: str | None = None,
+    has_target: bool | None = None,
+    query: str | None = None,
+    sort: str = "updated_desc",
+    limit: int = 50,
+    offset: int = 0,
+    include_archived: bool = False,
+    archived_only: bool = False,
+) -> tuple[list[WatchItem], int, int, int]:
+    safe_limit = max(1, min(limit, 200))
+    safe_offset = max(0, offset)
+
+    statement = select(WatchItem).where(WatchItem.owner_id == owner_id)
+
+    if archived_only:
+        statement = statement.where(WatchItem.archived_at.is_not(None))
+    elif not include_archived:
+        statement = statement.where(WatchItem.archived_at.is_(None))
+
+    if active is not None:
+        statement = statement.where(WatchItem.active == active)
+    if site_key:
+        statement = statement.where(WatchItem.site_key == site_key.strip())
+    if has_target is not None:
+        if has_target:
+            statement = statement.where(WatchItem.target_price.is_not(None))
+        else:
+            statement = statement.where(WatchItem.target_price.is_(None))
+
+    cleaned_query = query.strip() if query else ""
+    if cleaned_query:
+        like = f"%{cleaned_query.lower()}%"
+        statement = statement.where(
+            or_(
+                func.lower(WatchItem.custom_label).like(like),
+                func.lower(WatchItem.url).like(like),
+            )
+        )
+
+    if sort == "updated_asc":
+        statement = statement.order_by(WatchItem.updated_at.asc(), WatchItem.id.asc())
+    elif sort == "price_asc":
+        statement = statement.order_by(
+            func.coalesce(WatchItem.current_price, 99999999).asc(),
+            WatchItem.updated_at.desc(),
+            WatchItem.id.desc(),
+        )
+    elif sort == "price_desc":
+        statement = statement.order_by(
+            func.coalesce(WatchItem.current_price, -1).desc(),
+            WatchItem.updated_at.desc(),
+            WatchItem.id.desc(),
+        )
+    else:
+        statement = statement.order_by(WatchItem.updated_at.desc(), WatchItem.id.desc())
+
+    total = (
+        db_session.scalar(select(func.count()).select_from(statement.subquery())) or 0
+    )
+    items = list(
+        db_session.scalars(statement.limit(safe_limit).offset(safe_offset)).all()
+    )
+    return items, total, safe_limit, safe_offset
+
+
+def bulk_update_watch_items(
+    db_session: Session,
+    *,
+    owner_id: str,
+    item_ids: list[int],
+    action: str,
+    target_price: Decimal | None = None,
+) -> tuple[int, list[tuple[int, str]]]:
+    if not item_ids:
+        return 0, []
+
+    unique_ids = list(dict.fromkeys(item_ids))
+    items = list(
+        db_session.scalars(
+            select(WatchItem).where(
+                WatchItem.owner_id == owner_id,
+                WatchItem.id.in_(unique_ids),
+            )
+        ).all()
+    )
+    by_id = {item.id: item for item in items}
+
+    updated = 0
+    failed: list[tuple[int, str]] = []
+    now = datetime.now(UTC)
+
+    for item_id in unique_ids:
+        item = by_id.get(item_id)
+        if item is None:
+            failed.append((item_id, "not_found"))
+            continue
+
+        if action == "pause":
+            item.active = False
+        elif action == "resume":
+            item.active = True
+            if item.archived_at is not None:
+                item.archived_at = None
+        elif action == "archive":
+            item.archived_at = now
+            item.active = False
+        elif action == "set_target":
+            item.target_price = target_price
+        else:
+            failed.append((item_id, "unsupported_action"))
+            continue
+
+        updated += 1
+
+    db_session.commit()
+    return updated, failed
+
+
+def archive_watch_item(
+    db_session: Session,
+    *,
+    owner_id: str,
+    item_id: int,
+) -> WatchItem | None:
+    item = get_watch_item(db_session, owner_id=owner_id, item_id=item_id)
+    if item is None:
+        return None
+
+    item.archived_at = datetime.now(UTC)
+    item.active = False
+    db_session.commit()
+    db_session.refresh(item)
+    return item
+
+
+def restore_watch_item(
+    db_session: Session,
+    *,
+    owner_id: str,
+    item_id: int,
+) -> WatchItem | None:
+    item = get_watch_item(db_session, owner_id=owner_id, item_id=item_id)
+    if item is None:
+        return None
+
+    item.archived_at = None
+    item.active = True
+    db_session.commit()
+    db_session.refresh(item)
+    return item
 
 
 def deactivate_watch_item(
