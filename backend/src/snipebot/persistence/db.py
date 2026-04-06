@@ -35,6 +35,7 @@ def get_session_factory():
 
 def init_db() -> None:
     Base.metadata.create_all(bind=get_engine())
+    _ensure_legacy_columns()
 
 
 def get_db_session() -> Generator[Session, None, None]:
@@ -63,3 +64,16 @@ def _ensure_sqlite_parent_dir(db_url: str) -> None:
         return
 
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+
+
+def _ensure_legacy_columns() -> None:
+    settings = get_settings()
+    if not settings.is_sqlite:
+        return
+
+    with get_engine().begin() as connection:
+        rows = connection.execute(text("PRAGMA table_info('watch_items')")).fetchall()
+        existing_columns = {row[1] for row in rows}
+
+        if "notes" not in existing_columns:
+            connection.execute(text("ALTER TABLE watch_items ADD COLUMN notes TEXT"))

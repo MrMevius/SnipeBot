@@ -31,6 +31,7 @@ class WatchItem(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False)
     normalized_url: Mapped[str] = mapped_column(Text, nullable=False)
     custom_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     target_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     site_key: Mapped[str] = mapped_column(String(64), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

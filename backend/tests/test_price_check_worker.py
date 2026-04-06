@@ -187,9 +187,6 @@ def test_failed_check_keeps_latest_price_and_stores_failure_history(
     with session_factory() as session:
         run_due_price_checks(session, settings)
 
-    with session_factory() as session:
-        first_run_alert_count = session.query(AlertEvent).count()
-
     monkeypatch.setattr(
         "snipebot.domain.price_checks.get_adapter",
         lambda site_key: _ParseErrorAdapter(),
@@ -251,6 +248,9 @@ def test_alerts_are_recorded_and_deduplicated_for_unchanged_state(monkeypatch) -
 
     with session_factory() as session:
         run_due_price_checks(session, settings)
+
+    with session_factory() as session:
+        first_run_alert_count = session.query(AlertEvent).count()
 
     with session_factory() as session:
         item = session.query(WatchItem).one()

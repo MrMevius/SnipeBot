@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from decimal import Decimal
+from datetime import UTC, datetime, timedelta
 
 from snipebot.adapters.sites.base import AdapterCheckResult, ParsedProductData
 from snipebot.api import watchlist as watchlist_api
@@ -249,3 +250,125 @@ def test_watch_item_history_returns_series_and_summary() -> None:
     assert payload["lowest_price"] == 25.0
     assert payload["highest_price"] == 30.0
     assert len(payload["series"]) == 3
+
+
+def test_watch_item_detail_includes_lows_and_patch_updates_notes() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/watchlist",
+        json={
+            "url": "https://www.hema.nl/wonen-slapen/lamp-2",
+            "custom_label": "Detail Lamp",
+        },
+    )
+    assert create_response.status_code == 200
+    item_id = create_response.json()["item"]["id"]
+
+    now = datetime.now(UTC)
+    with get_engine().begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO price_checks (watch_item_id, checked_at, adapter_key, status, current_price, currency, availability, used_fallback)
+                VALUES (:item_id, :d40, 'hema', 'ok', 30.00, 'EUR', 'in_stock', 0),
+                       (:item_id, :d20, 'hema', 'ok', 20.00, 'EUR', 'in_stock', 0),
+                       (:item_id, :d3, 'hema', 'ok', 25.00, 'EUR', 'in_stock', 0)
+                """
+            ),
+            {
+                "item_id": item_id,
+                "d40": now - timedelta(days=40),
+                "d20": now - timedelta(days=20),
+                "d3": now - timedelta(days=3),
+            },
+        )
+
+    detail_response = client.get(f"/watchlist/{item_id}")
+    assert detail_response.status_code == 200
+    payload = detail_response.json()
+    assert payload["item"]["custom_label"] == "Detail Lamp"
+    assert payload["lows"]["low_7d"] == 25.0
+    assert payload["lows"]["low_30d"] == 20.0
+    assert payload["lows"]["all_time_low"] == 20.0
+
+    patch_response = client.patch(
+        f"/watchlist/{item_id}",
+        json={"custom_label": "Updated Lamp", "notes": "Watch weekend deals"},
+    )
+    assert patch_response.status_code == 200
+    assert patch_response.json()["custom_label"] == "Updated Lamp"
+    assert patch_response.json()["notes"] == "Watch weekend deals"
+
+    detail_after_patch = client.get(f"/watchlist/{item_id}")
+    assert detail_after_patch.status_code == 200
+    assert detail_after_patch.json()["item"]["notes"] == "Watch weekend deals"
+
+
+def test_watch_item_check_now_and_alert_history() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/watchlist",
+        json={
+            "url": "https://www.hema.nl/wonen-slapen/lamp-3",
+            "custom_label": "Alert Lamp",
+            "target_price": 29.99,
+        },
+    )
+    assert create_response.status_code == 200
+    item_id = create_response.json()["item"]["id"]
+
+    now = datetime.now(UTC)
+    with get_engine().begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO price_checks (watch_item_id, checked_at, adapter_key, status, current_price, currency, availability, used_fallback)
+                VALUES (:item_id, :checked_at, 'hema', 'ok', 27.50, 'EUR', 'in_stock', 0)
+                """
+            ),
+            {"item_id": item_id, "checked_at": now - timedelta(hours=1)},
+        )
+        check_id = connection.execute(
+            text(
+                "SELECT id FROM price_checks WHERE watch_item_id = :item_id ORDER BY id DESC LIMIT 1"
+            ),
+            {"item_id": item_id},
+        ).scalar_one()
+
+        connection.execute(
+            text(
+                """
+                INSERT INTO alert_events (
+                    watch_item_id, price_check_id, alert_kind, dedup_key, channel,
+                    delivery_status, sent_at, label_or_title, site_key, product_url,
+                    old_price, new_price, target_price, message_text, error_message
+                )
+                VALUES (
+                    :item_id, :check_id, 'target_reached', 'k1', 'telegram',
+                    'sent', :sent_at, 'Alert Lamp', 'hema', 'https://hema.nl/p/1',
+                    30.00, 27.50, 29.99, 'message', NULL
+                )
+                """
+            ),
+            {
+                "item_id": item_id,
+                "check_id": check_id,
+                "sent_at": now,
+            },
+        )
+
+    check_now_response = client.post(f"/watchlist/{item_id}/check-now")
+    assert check_now_response.status_code == 200
+    assert check_now_response.json()["status"] == "queued_for_next_worker_tick"
+
+    alert_history_response = client.get(f"/watchlist/{item_id}/alerts")
+    assert alert_history_response.status_code == 200
+    history_payload = alert_history_response.json()
+    assert history_payload["item_id"] == item_id
+    assert len(history_payload["events"]) == 1
+    assert history_payload["events"][0]["alert_kind"] == "target_reached"
+    assert history_payload["events"][0]["delivery_status"] == "sent"
