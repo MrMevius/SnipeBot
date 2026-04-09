@@ -50,6 +50,11 @@ class WatchItem(Base):
     )
     last_error_kind: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    consecutive_failure_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    dead_lettered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    dead_letter_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     check_count: Mapped[int] = mapped_column(nullable=False, default=0)
     successful_check_count: Mapped[int] = mapped_column(nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
@@ -67,6 +72,10 @@ class WatchItem(Base):
     )
     alert_events: Mapped[list["AlertEvent"]] = relationship(
         back_populates="watch_item", cascade="all, delete-orphan"
+    )
+    tags: Mapped[list["WatchItemTag"]] = relationship(
+        secondary="watch_item_tag_links",
+        back_populates="items",
     )
 
 
@@ -129,6 +138,39 @@ class AlertEvent(Base):
 
     watch_item: Mapped[WatchItem] = relationship(back_populates="alert_events")
     price_check: Mapped[PriceCheck] = relationship(back_populates="alert_events")
+
+
+class WatchItemTag(Base):
+    __tablename__ = "watch_item_tags"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "name", name="uq_watch_tag_owner_name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    items: Mapped[list[WatchItem]] = relationship(
+        secondary="watch_item_tag_links",
+        back_populates="tags",
+    )
+
+
+class WatchItemTagLink(Base):
+    __tablename__ = "watch_item_tag_links"
+    __table_args__ = (
+        UniqueConstraint("watch_item_id", "tag_id", name="uq_watch_item_tag_link"),
+    )
+
+    watch_item_id: Mapped[int] = mapped_column(
+        ForeignKey("watch_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    tag_id: Mapped[int] = mapped_column(
+        ForeignKey("watch_item_tags.id", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class AppSetting(Base):

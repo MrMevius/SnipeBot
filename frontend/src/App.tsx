@@ -2,15 +2,21 @@ import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import {
   archiveWatchItem,
   bulkUpdateWatchItems,
+  createWatchTag,
   fetchSettings,
+  fetchWatchlistHealth,
+  fetchWatchTags,
   fetchWatchItemAlerts,
   fetchWatchItemDetail,
   fetchWatchItemHistory,
   fetchWatchlist,
+  getOwnerId,
   patchSettings,
   patchWatchItem,
   previewWatchItemByUrl,
   restoreWatchItem,
+  setWatchItemTags,
+  setOwnerId,
   triggerWatchItemCheckNow,
   upsertWatchItem,
   type AlertEvent,
@@ -19,6 +25,8 @@ import {
   type WatchItemDetailResponse,
   type WatchItemHistoryResponse,
   type WatchItemPreviewResponse,
+  type WatchTag,
+  type WatchlistHealthResponse,
 } from "./api/client";
 
 type CurrencyDisplayMode = "symbol" | "code";
@@ -425,6 +433,7 @@ type SettingsFormState = {
 type SortOption = "updated_desc" | "updated_asc" | "price_asc" | "price_desc";
 type TernaryFilter = "any" | "yes" | "no";
 type BulkAction = BulkWatchItemPayload["action"];
+type MenuView = "watchlist" | "stats" | "settings";
 
 function parseRoute(pathname: string): Route {
   const match = pathname.match(/^\/products\/(\d+)$/);
@@ -729,6 +738,7 @@ export function App() {
   const [items, setItems] = useState<WatchItem[]>([]);
   const [histories, setHistories] = useState<Record<number, WatchItemHistoryResponse>>({});
   const [url, setUrl] = useState("");
+  const [ownerId, setOwnerIdState] = useState(() => getOwnerId());
   const [customLabel, setCustomLabel] = useState("");
   const [targetPrice, setTargetPrice] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -737,7 +747,8 @@ export function App() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [labelDirty, setLabelDirty] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuView, setMenuView] = useState<MenuView>("watchlist");
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
@@ -752,6 +763,7 @@ export function App() {
   const [activeFilter, setActiveFilter] = useState<TernaryFilter>("any");
   const [hasTargetFilter, setHasTargetFilter] = useState<TernaryFilter>("any");
   const [siteKeyFilter, setSiteKeyFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
   const [searchFilter, setSearchFilter] = useState("");
   const [sort, setSort] = useState<SortOption>("updated_desc");
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -763,6 +775,10 @@ export function App() {
   const [bulkAction, setBulkAction] = useState<BulkAction>("pause");
   const [bulkTargetPrice, setBulkTargetPrice] = useState("");
   const [bulkWorking, setBulkWorking] = useState(false);
+  const [availableTags, setAvailableTags] = useState<WatchTag[]>([]);
+  const [newTagName, setNewTagName] = useState("");
+  const [rowTagInputs, setRowTagInputs] = useState<Record<number, string>>({});
+  const [health, setHealth] = useState<WatchlistHealthResponse | null>(null);
   const labelRef = useRef(customLabel);
   const labelDirtyRef = useRef(labelDirty);
 
@@ -821,8 +837,21 @@ export function App() {
     loadBackendSettings().catch((err: Error) => setSettingsError(err.message));
   }, []);
 
+  useEffect(() => {
+    const loadTags = async () => {
+      try {
+        const payload = await fetchWatchTags();
+        setAvailableTags(payload.tags);
+      } catch {
+        // keep tag controls usable without suggestions
+      }
+    };
+    loadTags().catch(() => undefined);
+  }, []);
+
   async function loadWatchlist() {
-    const response = await fetchWatchlist({
+    const [response, healthPayload] = await Promise.all([
+      fetchWatchlist({
       active:
         activeFilter === "any"
           ? undefined
@@ -836,15 +865,19 @@ export function App() {
             ? true
             : false,
       site_key: siteKeyFilter.trim() || undefined,
+      tag: tagFilter.trim() || undefined,
       q: searchFilter.trim() || undefined,
       sort,
       limit,
       offset,
       include_archived: includeArchived,
       archived_only: archivedOnly,
-    });
+      }),
+      fetchWatchlistHealth(),
+    ]);
     setItems(response.items);
     setTotal(response.total);
+    setHealth(healthPayload);
 
     const loadedHistories = await Promise.all(
       response.items.map(async (item) => {
@@ -871,9 +904,11 @@ export function App() {
   useEffect(() => {
     loadWatchlist().catch((err: Error) => setError(err.message));
   }, [
+    ownerId,
     activeFilter,
     hasTargetFilter,
     siteKeyFilter,
+    tagFilter,
     searchFilter,
     sort,
     limit,
@@ -889,8 +924,20 @@ export function App() {
   }, [items]);
 
   useEffect(() => {
+    setRowTagInputs((previous) => {
+      const next = { ...previous };
+      for (const item of items) {
+        if (!(item.id in next)) {
+          next[item.id] = item.tags.join(", ");
+        }
+      }
+      return next;
+    });
+  }, [items]);
+
+  useEffect(() => {
     setOffset(0);
-  }, [activeFilter, hasTargetFilter, siteKeyFilter, searchFilter, sort, limit, includeArchived, archivedOnly]);
+  }, [ownerId, activeFilter, hasTargetFilter, siteKeyFilter, tagFilter, searchFilter, sort, limit, includeArchived, archivedOnly]);
 
   useEffect(() => {
     const candidateUrl = url.trim();
@@ -1105,6 +1152,50 @@ export function App() {
     }
   }
 
+  async function handleCreateTag() {
+    const candidate = newTagName.trim();
+    if (!candidate) {
+      setError("Tag name is required.");
+      return;
+    }
+
+    setError(null);
+    setFeedback(null);
+    try {
+      const created = await createWatchTag(candidate);
+      setAvailableTags((previous) => {
+        if (previous.some((tag) => tag.id === created.id || tag.name.toLowerCase() === created.name.toLowerCase())) {
+          return previous;
+        }
+        return [...previous, created].sort((a, b) => a.name.localeCompare(b.name));
+      });
+      setNewTagName("");
+      setFeedback(`Tag \"${created.name}\" saved.`);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function handleSaveItemTags(itemId: number) {
+    const raw = rowTagInputs[itemId] ?? "";
+    const tags = raw
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    setError(null);
+    setFeedback(null);
+    try {
+      await setWatchItemTags(itemId, tags);
+      await loadWatchlist();
+      const payload = await fetchWatchTags();
+      setAvailableTags(payload.tags);
+      setFeedback("Tags saved.");
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   const allOnPageSelected =
     items.length > 0 && items.every((item) => selectedItemIds.includes(item.id));
   const hasPreviousPage = offset > 0;
@@ -1123,21 +1214,127 @@ export function App() {
 
   return (
     <main className="container">
-      <h1>SnipeBot Watchlist</h1>
-
-      <section className="panel">
-        <div className="settings-header">
-          <h2>Settings</h2>
+      <header className="topbar panel">
+        <h1>SnipeBot Watchlist</h1>
+        <div className="topbar-actions">
+          <a className="button-link" href="#add-product">Add product</a>
           <button
             type="button"
             className="secondary"
-            onClick={() => setSettingsOpen((previous) => !previous)}
+            onClick={() => setMenuOpen((previous) => !previous)}
           >
-            {settingsOpen ? "Hide settings" : "Open settings"}
+            {menuOpen ? "Close menu" : "Menu"}
           </button>
         </div>
-        {settingsOpen ? (
-          settingsLoading || !settingsForm ? (
+      </header>
+
+      {menuOpen ? (
+        <section className="panel menu-panel">
+          <div className="menu-tabs" role="tablist" aria-label="Main menu views">
+            <button
+              type="button"
+              className={menuView === "watchlist" ? "pill active" : "pill"}
+              onClick={() => {
+                setMenuView("watchlist");
+                setMenuOpen(false);
+              }}
+            >
+              Watchlist
+            </button>
+            <button
+              type="button"
+              className={menuView === "stats" ? "pill active" : "pill"}
+              onClick={() => {
+                setMenuView("stats");
+                setMenuOpen(false);
+              }}
+            >
+              Stats
+            </button>
+            <button
+              type="button"
+              className={menuView === "settings" ? "pill active" : "pill"}
+              onClick={() => {
+                setMenuView("settings");
+                setMenuOpen(false);
+              }}
+            >
+              Settings
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {menuView === "stats" ? (
+        <section className="panel">
+          <h2>Stats</h2>
+          <div className="actions-row compact-actions-row">
+            <label>
+              Owner ID
+              <input
+                type="text"
+                value={ownerId}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setOwnerIdState(next);
+                  setOwnerId(next);
+                }}
+                placeholder="local"
+              />
+            </label>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                void loadWatchlist();
+              }}
+            >
+              Refresh health
+            </button>
+          </div>
+          {health ? (
+            <div className="snapshot-grid">
+              <div>
+                <div className="muted">Owner</div>
+                <strong>{health.owner_id}</strong>
+              </div>
+              <div>
+                <div className="muted">Total</div>
+                <strong>{health.total}</strong>
+              </div>
+              <div>
+                <div className="muted">Active</div>
+                <strong>{health.active}</strong>
+              </div>
+              <div>
+                <div className="muted">Archived</div>
+                <strong>{health.archived}</strong>
+              </div>
+              <div>
+                <div className="muted">Stale</div>
+                <strong>{health.stale}</strong>
+              </div>
+              <div>
+                <div className="muted">Error</div>
+                <strong>{health.error}</strong>
+              </div>
+              <div>
+                <div className="muted">Dead-lettered</div>
+                <strong>{health.dead_lettered}</strong>
+              </div>
+            </div>
+          ) : (
+            <p className="muted">No health data yet.</p>
+          )}
+        </section>
+      ) : null}
+
+      {menuView === "settings" ? (
+        <section className="panel">
+          <div className="settings-header">
+            <h2>Settings</h2>
+          </div>
+          {settingsLoading || !settingsForm ? (
             <p className="muted">Loading settings…</p>
           ) : (
             <form className="settings-form" onSubmit={handleSaveSettings}>
@@ -1253,316 +1450,364 @@ export function App() {
                 service restart to fully apply.
               </p>
             </form>
-          )
-        ) : (
-          <p className="muted">Use settings to configure notifications, scraping fallback, UI defaults and theme.</p>
-        )}
-        {settingsError && <p className="error">{settingsError}</p>}
-        {settingsFeedback && <p className="success">{settingsFeedback}</p>}
-      </section>
+          )}
+          {settingsError && <p className="error">{settingsError}</p>}
+          {settingsFeedback && <p className="success">{settingsFeedback}</p>}
+        </section>
+      ) : null}
 
-      <section className="panel compact-form">
-        <h2>Add Product</h2>
-        <form onSubmit={handleSubmit}>
-          <div className="grid">
-            <label>
-              URL
-              <input
-                type="url"
-                placeholder="https://..."
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-              />
-            </label>
-            <label>
-              Custom label (optional)
-              <input
-                type="text"
-                placeholder="Desk lamp"
-                value={customLabel}
-                onChange={(event) => {
-                  setLabelDirty(true);
-                  setCustomLabel(event.target.value);
-                }}
-              />
-            </label>
-            <label>
-              Target price (optional)
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="39.99"
-                value={targetPrice}
-                onChange={(event) => setTargetPrice(event.target.value)}
-              />
-            </label>
-          </div>
-          <button type="submit">Add to watchlist</button>
-        </form>
-        {previewLoading && <p className="muted">Fetching product details…</p>}
-        {preview && (
-          <div className="preview-card">
-            <strong>{preview.title}</strong>
-            <div className="muted">
-              Site: {preview.site_key} · Price: {formatPrice(preview.current_price, currencyDisplayMode)} ·
-              Availability: {preview.availability}
-            </div>
-          </div>
-        )}
-        {previewError && <p className="error">{previewError}</p>}
-        {error && <p className="error">{error}</p>}
-        {feedback && <p className="success">{feedback}</p>}
-      </section>
-
-      <section className="panel">
-        <h2>Watchlist Overview</h2>
-        <div className="grid">
-          <label>
-            Search
-            <input
-              type="text"
-              placeholder="label or URL"
-              value={searchFilter}
-              onChange={(event) => setSearchFilter(event.target.value)}
-            />
-          </label>
-          <label>
-            Active
-            <select
-              value={activeFilter}
-              onChange={(event) => setActiveFilter(event.target.value as TernaryFilter)}
-            >
-              <option value="any">Any</option>
-              <option value="yes">Active</option>
-              <option value="no">Inactive</option>
-            </select>
-          </label>
-          <label>
-            Has target
-            <select
-              value={hasTargetFilter}
-              onChange={(event) => setHasTargetFilter(event.target.value as TernaryFilter)}
-            >
-              <option value="any">Any</option>
-              <option value="yes">Yes</option>
-              <option value="no">No</option>
-            </select>
-          </label>
-          <label>
-            Site key
-            <input
-              type="text"
-              placeholder="hema"
-              value={siteKeyFilter}
-              onChange={(event) => setSiteKeyFilter(event.target.value)}
-            />
-          </label>
-          <label>
-            Sort
-            <select value={sort} onChange={(event) => setSort(event.target.value as SortOption)}>
-              <option value="updated_desc">Updated (newest)</option>
-              <option value="updated_asc">Updated (oldest)</option>
-              <option value="price_asc">Current price (low-high)</option>
-              <option value="price_desc">Current price (high-low)</option>
-            </select>
-          </label>
-          <label>
-            Page size
-            <select value={String(limit)} onChange={(event) => setLimit(Number(event.target.value))}>
-              <option value="10">10</option>
-              <option value="25">25</option>
-              <option value="50">50</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="actions-row">
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={includeArchived}
-              onChange={(event) => {
-                const checked = event.target.checked;
-                setIncludeArchived(checked);
-                if (!checked) {
-                  setArchivedOnly(false);
-                }
-              }}
-            />
-            Include archived
-          </label>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={archivedOnly}
-              disabled={!includeArchived}
-              onChange={(event) => setArchivedOnly(event.target.checked)}
-            />
-            Archived only
-          </label>
-          <span className="muted">
-            Showing {items.length} of {total}
-          </span>
-        </div>
-
-        <div className="actions-row">
-          <label>
-            Bulk action
-            <select
-              value={bulkAction}
-              onChange={(event) => setBulkAction(event.target.value as BulkAction)}
-            >
-              <option value="pause">Pause</option>
-              <option value="resume">Resume</option>
-              <option value="archive">Archive</option>
-              <option value="set_target">Set target</option>
-            </select>
-          </label>
-          {bulkAction === "set_target" ? (
-            <label>
-              Target price
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={bulkTargetPrice}
-                onChange={(event) => setBulkTargetPrice(event.target.value)}
-                placeholder="empty = clear"
-              />
-            </label>
-          ) : null}
-          <button
-            type="button"
-            className="secondary"
-            disabled={bulkWorking || selectedItemIds.length === 0}
-            onClick={() => {
-              void handleBulkApply();
-            }}
-          >
-            {bulkWorking ? "Applying..." : `Apply to selected (${selectedItemIds.length})`}
-          </button>
-        </div>
-
-        {items.length === 0 ? (
-          <p>No watched items yet.</p>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>
+      {menuView === "watchlist" ? (
+        <>
+          <section id="add-product" className="panel compact-form">
+            <h2>Add Product</h2>
+            <form onSubmit={handleSubmit}>
+              <div className="compact-grid">
+                <label>
+                  URL
                   <input
-                    type="checkbox"
-                    checked={allOnPageSelected}
-                    onChange={(event) => toggleSelectedPage(event.target.checked)}
-                    aria-label="Select all on page"
+                    type="url"
+                    placeholder="https://..."
+                    value={url}
+                    onChange={(event) => setUrl(event.target.value)}
                   />
-                </th>
-                <th>Product</th>
-                <th>Site</th>
-                <th>Target</th>
-                <th>Current</th>
-                <th>Insights</th>
-                <th>Last check</th>
-                <th>Status</th>
-                <th>Active</th>
-                <th>Archived</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => (
-                <tr key={item.id}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={selectedItemIds.includes(item.id)}
-                      onChange={() => toggleSelected(item.id)}
-                      aria-label={`Select item ${item.id}`}
-                    />
-                  </td>
-                  <td>
-                    <strong>
-                      <a
-                        href={`/products/${item.id}`}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          navigate(`/products/${item.id}`);
-                        }}
-                      >
-                        {item.custom_label || "(no label)"}
-                      </a>
-                    </strong>
-                    <div className="muted">{item.url}</div>
-                  </td>
-                  <td>{item.site_key}</td>
-                  <td>{formatPrice(item.target_price, currencyDisplayMode)}</td>
-                  <td>{formatPrice(item.current_price, currencyDisplayMode)}</td>
-                  <td>
-                    {histories[item.id]?.checks_count ? (
-                      <div className="insights">
-                        <div className="insight-row">
-                          <span>L:</span> {formatPrice(histories[item.id].latest_price, currencyDisplayMode)}
-                        </div>
-                        <div className="insight-row">
-                          <span>Lo:</span> {formatPrice(histories[item.id].lowest_price, currencyDisplayMode)}
-                        </div>
-                        <div className="insight-row">
-                          <span>Hi:</span> {formatPrice(histories[item.id].highest_price, currencyDisplayMode)}
-                        </div>
-                        <TrendChart
-                          points={histories[item.id].series}
-                          width={180}
-                          height={56}
-                          currencyDisplayMode={currencyDisplayMode}
-                        />
-                      </div>
-                    ) : (
-                      <span className="muted">-</span>
-                    )}
-                  </td>
-                  <td>{item.last_checked_at ?? "-"}</td>
-                  <td>{item.last_status}</td>
-                  <td>{item.active ? "yes" : "no"}</td>
-                  <td>{item.archived_at ? "yes" : "no"}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() => {
-                        void handleArchiveToggle(item);
-                      }}
-                    >
-                      {item.archived_at ? "Restore" : "Archive"}
-                    </button>
-                  </td>
-                </tr>
+                </label>
+                <label>
+                  Label (optional)
+                  <input
+                    type="text"
+                    placeholder="Desk lamp"
+                    value={customLabel}
+                    onChange={(event) => {
+                      setLabelDirty(true);
+                      setCustomLabel(event.target.value);
+                    }}
+                  />
+                </label>
+                <label>
+                  Target (optional)
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="39.99"
+                    value={targetPrice}
+                    onChange={(event) => setTargetPrice(event.target.value)}
+                  />
+                </label>
+                <button type="submit">Add to watchlist</button>
+              </div>
+            </form>
+            {previewLoading && <p className="muted">Fetching product details…</p>}
+            {preview && (
+              <div className="preview-card">
+                <strong>{preview.title}</strong>
+                <div className="muted">
+                  Site: {preview.site_key} · Price: {formatPrice(preview.current_price, currencyDisplayMode)} ·
+                  Availability: {preview.availability}
+                </div>
+              </div>
+            )}
+            {previewError && <p className="error">{previewError}</p>}
+            {error && <p className="error">{error}</p>}
+            {feedback && <p className="success">{feedback}</p>}
+          </section>
+
+          <section className="panel">
+            <h2>Watchlist Overview</h2>
+            <div className="filter-grid">
+              <label className="inline-field">
+                <span>Search</span>
+                <input
+                  type="text"
+                  placeholder="label or URL"
+                  value={searchFilter}
+                  onChange={(event) => setSearchFilter(event.target.value)}
+                />
+              </label>
+              <label className="inline-field">
+                <span>Active</span>
+                <select
+                  value={activeFilter}
+                  onChange={(event) => setActiveFilter(event.target.value as TernaryFilter)}
+                >
+                  <option value="any">Any</option>
+                  <option value="yes">Active</option>
+                  <option value="no">Inactive</option>
+                </select>
+              </label>
+              <label className="inline-field">
+                <span>Target</span>
+                <select
+                  value={hasTargetFilter}
+                  onChange={(event) => setHasTargetFilter(event.target.value as TernaryFilter)}
+                >
+                  <option value="any">Any</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </label>
+              <label className="inline-field">
+                <span>Site</span>
+                <input
+                  type="text"
+                  placeholder="hema"
+                  value={siteKeyFilter}
+                  onChange={(event) => setSiteKeyFilter(event.target.value)}
+                />
+              </label>
+              <label className="inline-field">
+                <span>Tag</span>
+                <input
+                  type="text"
+                  placeholder="deal"
+                  value={tagFilter}
+                  onChange={(event) => setTagFilter(event.target.value)}
+                  list="tag-suggestions"
+                />
+              </label>
+              <label className="inline-field">
+                <span>Sort</span>
+                <select value={sort} onChange={(event) => setSort(event.target.value as SortOption)}>
+                  <option value="updated_desc">Updated ↓</option>
+                  <option value="updated_asc">Updated ↑</option>
+                  <option value="price_asc">Price ↑</option>
+                  <option value="price_desc">Price ↓</option>
+                </select>
+              </label>
+              <label className="inline-field">
+                <span>Rows</span>
+                <select value={String(limit)} onChange={(event) => setLimit(Number(event.target.value))}>
+                  <option value="10">10</option>
+                  <option value="25">25</option>
+                  <option value="50">50</option>
+                </select>
+              </label>
+            </div>
+            <datalist id="tag-suggestions">
+              {availableTags.map((tag) => (
+                <option key={tag.id} value={tag.name} />
               ))}
-            </tbody>
-          </table>
-        )}
-        <div className="actions-row">
-          <button
-            type="button"
-            className="secondary"
-            disabled={!hasPreviousPage}
-            onClick={() => setOffset((previous) => Math.max(previous - limit, 0))}
-          >
-            Previous
-          </button>
-          <span className="muted">
-            Page {Math.floor(offset / limit) + 1} / {Math.max(1, Math.ceil(total / limit))}
-          </span>
-          <button
-            type="button"
-            className="secondary"
-            disabled={!hasNextPage}
-            onClick={() => setOffset((previous) => previous + limit)}
-          >
-            Next
-          </button>
-        </div>
-      </section>
+            </datalist>
+
+            <div className="actions-row compact-actions-row">
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={includeArchived}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setIncludeArchived(checked);
+                    if (!checked) {
+                      setArchivedOnly(false);
+                    }
+                  }}
+                />
+                Include archived
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={archivedOnly}
+                  disabled={!includeArchived}
+                  onChange={(event) => setArchivedOnly(event.target.checked)}
+                />
+                Archived only
+              </label>
+              <label className="inline-field small-inline-field">
+                <span>New tag</span>
+                <input
+                  type="text"
+                  value={newTagName}
+                  onChange={(event) => setNewTagName(event.target.value)}
+                  placeholder="electronics"
+                />
+              </label>
+              <button type="button" className="secondary" onClick={() => void handleCreateTag()}>
+                Save tag
+              </button>
+              <span className="muted compact-count">Showing {items.length} of {total}</span>
+            </div>
+
+            <div className="actions-row compact-actions-row">
+              <label className="inline-field small-inline-field">
+                <span>Bulk</span>
+                <select
+                  value={bulkAction}
+                  onChange={(event) => setBulkAction(event.target.value as BulkAction)}
+                >
+                  <option value="pause">Pause</option>
+                  <option value="resume">Resume</option>
+                  <option value="archive">Archive</option>
+                  <option value="set_target">Set target</option>
+                </select>
+              </label>
+              {bulkAction === "set_target" ? (
+                <label className="inline-field small-inline-field">
+                  <span>Target</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={bulkTargetPrice}
+                    onChange={(event) => setBulkTargetPrice(event.target.value)}
+                    placeholder="empty = clear"
+                  />
+                </label>
+              ) : null}
+              <button
+                type="button"
+                className="secondary"
+                disabled={bulkWorking || selectedItemIds.length === 0}
+                onClick={() => {
+                  void handleBulkApply();
+                }}
+              >
+                {bulkWorking ? "Applying..." : `Apply (${selectedItemIds.length})`}
+              </button>
+            </div>
+
+            {items.length === 0 ? (
+              <p>No watched items yet.</p>
+            ) : (
+              <table className="compact-table">
+                <thead>
+                  <tr>
+                    <th>
+                      <input
+                        type="checkbox"
+                        checked={allOnPageSelected}
+                        onChange={(event) => toggleSelectedPage(event.target.checked)}
+                        aria-label="Select all on page"
+                      />
+                    </th>
+                    <th>Product</th>
+                    <th>Site</th>
+                    <th>Target</th>
+                    <th>Current</th>
+                    <th>Trend</th>
+                    <th>Status</th>
+                    <th>Flags</th>
+                    <th>Tags</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item) => (
+                    <tr key={item.id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedItemIds.includes(item.id)}
+                          onChange={() => toggleSelected(item.id)}
+                          aria-label={`Select item ${item.id}`}
+                        />
+                      </td>
+                      <td>
+                        <a
+                          href={`/products/${item.id}`}
+                          className="product-link"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            navigate(`/products/${item.id}`);
+                          }}
+                        >
+                          {item.custom_label || "(no label)"}
+                        </a>
+                      </td>
+                      <td>{item.site_key}</td>
+                      <td>{formatPrice(item.target_price, currencyDisplayMode)}</td>
+                      <td>{formatPrice(item.current_price, currencyDisplayMode)}</td>
+                      <td>
+                        {histories[item.id]?.checks_count ? (
+                          <div className="insights-inline">
+                            <span>
+                              L:{formatPrice(histories[item.id].latest_price, currencyDisplayMode)} · Lo:
+                              {formatPrice(histories[item.id].lowest_price, currencyDisplayMode)} · Hi:
+                              {formatPrice(histories[item.id].highest_price, currencyDisplayMode)}
+                            </span>
+                            <TrendChart
+                              points={histories[item.id].series}
+                              width={120}
+                              height={28}
+                              currencyDisplayMode={currencyDisplayMode}
+                            />
+                          </div>
+                        ) : (
+                          <span className="muted">-</span>
+                        )}
+                      </td>
+                      <td>
+                        <span>{item.last_status}</span>
+                        <span className="muted compact-cell-sub">{formatDateTime(item.last_checked_at)}</span>
+                      </td>
+                      <td>{item.active ? "active" : "paused"} · {item.archived_at ? "archived" : "live"}</td>
+                      <td>
+                        <input
+                          className="compact-tag-input"
+                          type="text"
+                          value={rowTagInputs[item.id] ?? item.tags.join(", ")}
+                          onChange={(event) =>
+                            setRowTagInputs((previous) => ({
+                              ...previous,
+                              [item.id]: event.target.value,
+                            }))
+                          }
+                          placeholder="tag1, tag2"
+                          list="tag-suggestions"
+                        />
+                      </td>
+                      <td>
+                        <div className="row-actions">
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => {
+                              void handleSaveItemTags(item.id);
+                            }}
+                          >
+                            Save tags
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => {
+                              void handleArchiveToggle(item);
+                            }}
+                          >
+                            {item.archived_at ? "Restore" : "Archive"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <div className="actions-row compact-actions-row">
+              <button
+                type="button"
+                className="secondary"
+                disabled={!hasPreviousPage}
+                onClick={() => setOffset((previous) => Math.max(previous - limit, 0))}
+              >
+                Previous
+              </button>
+              <span className="muted">
+                Page {Math.floor(offset / limit) + 1} / {Math.max(1, Math.ceil(total / limit))}
+              </span>
+              <button
+                type="button"
+                className="secondary"
+                disabled={!hasNextPage}
+                onClick={() => setOffset((previous) => previous + limit)}
+              >
+                Next
+              </button>
+            </div>
+          </section>
+        </>
+      ) : null}
     </main>
   );
 }

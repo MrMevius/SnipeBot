@@ -82,3 +82,22 @@ def _ensure_legacy_columns() -> None:
             connection.execute(
                 text("ALTER TABLE watch_items ADD COLUMN archived_at DATETIME")
             )
+
+        if "consecutive_failure_count" not in existing_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE watch_items ADD COLUMN consecutive_failure_count INTEGER NOT NULL DEFAULT 0"
+                )
+            )
+
+        if "dead_lettered_at" not in existing_columns:
+            connection.execute(
+                text("ALTER TABLE watch_items ADD COLUMN dead_lettered_at DATETIME")
+            )
+
+        if "dead_letter_reason" not in existing_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE watch_items ADD COLUMN dead_letter_reason VARCHAR(255)"
+                )
+            )

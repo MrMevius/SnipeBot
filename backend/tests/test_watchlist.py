@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from snipebot.adapters.sites.base import AdapterCheckResult, ParsedProductData
 from snipebot.api import watchlist as watchlist_api
 from snipebot.core.config import get_settings
+from snipebot.domain.price_checks import run_due_price_checks
 from snipebot.main import app
 from snipebot.persistence.db import get_engine, init_db
 
@@ -16,6 +17,8 @@ def _reset_watch_items() -> None:
         connection.execute(text("DELETE FROM app_settings"))
         connection.execute(text("DELETE FROM alert_events"))
         connection.execute(text("DELETE FROM price_checks"))
+        connection.execute(text("DELETE FROM watch_item_tag_links"))
+        connection.execute(text("DELETE FROM watch_item_tags"))
         connection.execute(text("DELETE FROM watch_items"))
 
 
@@ -481,6 +484,258 @@ def test_watchlist_bulk_archive_and_restore_flow() -> None:
     visible_items = visible_after_restore.json()["items"]
     assert len(visible_items) == 1
     assert visible_items[0]["id"] == first_id
+
+
+def test_watchlist_tags_create_assign_and_filter() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    create_item = client.post(
+        "/watchlist",
+        json={"url": "https://www.hema.nl/p/tags-1", "custom_label": "Tagged item"},
+    )
+    assert create_item.status_code == 200
+    item_id = create_item.json()["item"]["id"]
+
+    create_tag = client.post("/watchlist/tags", json={"name": "Deals"})
+    assert create_tag.status_code == 200
+    assert create_tag.json()["name"] == "Deals"
+
+    assign = client.patch(
+        f"/watchlist/{item_id}/tags", json={"tags": ["Deals", "Weekend"]}
+    )
+    assert assign.status_code == 200
+    assert assign.json()["tags"] == ["Deals", "Weekend"]
+
+    tag_list = client.get("/watchlist/tags")
+    assert tag_list.status_code == 200
+    names = [entry["name"] for entry in tag_list.json()["tags"]]
+    assert names == ["Deals", "Weekend"]
+
+    filtered = client.get("/watchlist", params={"tag": "deals"})
+    assert filtered.status_code == 200
+    payload = filtered.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["id"] == item_id
+
+
+def test_watchlist_import_dry_run_and_apply_and_export() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    dry_run = client.post(
+        "/watchlist/import",
+        params={"dry_run": "true"},
+        json={
+            "items": [
+                {
+                    "url": "https://www.hema.nl/p/import-a",
+                    "custom_label": "Import A",
+                    "target_price": 11.25,
+                    "tags": ["Kitchen", "Deals"],
+                },
+                {
+                    "url": "notaurl",
+                    "custom_label": "Broken",
+                },
+            ]
+        },
+    )
+    assert dry_run.status_code == 200
+    dry_payload = dry_run.json()
+    assert dry_payload["dry_run"] is True
+    assert dry_payload["summary"]["created"] == 1
+    assert dry_payload["summary"]["error"] == 1
+
+    list_after_dry_run = client.get("/watchlist")
+    assert list_after_dry_run.status_code == 200
+    assert list_after_dry_run.json()["total"] == 0
+
+    apply = client.post(
+        "/watchlist/import",
+        params={"dry_run": "false"},
+        json={
+            "items": [
+                {
+                    "url": "https://www.hema.nl/p/import-a",
+                    "custom_label": "Import A",
+                    "target_price": 11.25,
+                    "tags": ["Kitchen", "Deals"],
+                },
+                {
+                    "url": "https://www.hema.nl/p/import-a",
+                    "custom_label": "Import A Updated",
+                    "target_price": 10.50,
+                    "tags": "Kitchen",
+                },
+            ]
+        },
+    )
+    assert apply.status_code == 200
+    apply_payload = apply.json()
+    assert apply_payload["dry_run"] is False
+    assert apply_payload["summary"]["created"] == 1
+    assert apply_payload["summary"]["updated"] == 1
+
+    list_after_apply = client.get("/watchlist")
+    assert list_after_apply.status_code == 200
+    list_payload = list_after_apply.json()
+    assert list_payload["total"] == 1
+    assert list_payload["items"][0]["custom_label"] == "Import A Updated"
+    assert list_payload["items"][0]["tags"] == ["Kitchen"]
+
+    export_json = client.get("/watchlist/export", params={"format": "json"})
+    assert export_json.status_code == 200
+    export_payload = export_json.json()
+    assert export_payload["count"] == 1
+    assert export_payload["items"][0]["tags"] == ["Kitchen"]
+
+    export_csv = client.get("/watchlist/export", params={"format": "csv"})
+    assert export_csv.status_code == 200
+    assert "text/csv" in export_csv.headers["content-type"]
+    assert "Import A Updated" in export_csv.text
+
+
+def test_watchlist_owner_scoping_separates_data() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    local_item = client.post(
+        "/watchlist",
+        json={"url": "https://www.hema.nl/p/local-item", "custom_label": "Local"},
+    )
+    assert local_item.status_code == 200
+
+    alice_item = client.post(
+        "/watchlist",
+        headers={"X-Owner-Id": "alice"},
+        json={"url": "https://www.hema.nl/p/alice-item", "custom_label": "Alice"},
+    )
+    assert alice_item.status_code == 200
+
+    local_list = client.get("/watchlist")
+    assert local_list.status_code == 200
+    assert local_list.json()["total"] == 1
+    assert local_list.json()["items"][0]["custom_label"] == "Local"
+
+    alice_list = client.get("/watchlist", headers={"X-Owner-Id": "alice"})
+    assert alice_list.status_code == 200
+    assert alice_list.json()["total"] == 1
+    assert alice_list.json()["items"][0]["custom_label"] == "Alice"
+
+
+def test_watchlist_health_and_metrics_endpoint() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    created = client.post(
+        "/watchlist",
+        json={"url": "https://www.hema.nl/p/health-item", "custom_label": "Health"},
+    )
+    assert created.status_code == 200
+
+    health_response = client.get("/watchlist/health")
+    assert health_response.status_code == 200
+    payload = health_response.json()
+    assert payload["owner_id"] == "local"
+    assert payload["total"] == 1
+    assert payload["active"] == 1
+    assert payload["dead_lettered"] == 0
+
+    metrics_response = client.get("/health/metrics")
+    assert metrics_response.status_code == 200
+    counters = metrics_response.json()["counters"]
+    assert "api.watchlist.upsert" in counters
+    assert counters["api.watchlist.health"] >= 1
+
+
+def test_write_rate_limit_blocks_excess_requests() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+    settings = get_settings()
+    original_limit = settings.rate_limit_write_requests_per_minute
+    original_window = settings.rate_limit_window_seconds
+
+    settings.rate_limit_write_requests_per_minute = 2
+    settings.rate_limit_window_seconds = 60
+    try:
+        headers = {"X-Owner-Id": "rate-limit-test-owner"}
+        first = client.post("/watchlist/tags", headers=headers, json={"name": "rl-a"})
+        second = client.post("/watchlist/tags", headers=headers, json={"name": "rl-b"})
+        third = client.post("/watchlist/tags", headers=headers, json={"name": "rl-c"})
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert third.status_code == 429
+    finally:
+        settings.rate_limit_write_requests_per_minute = original_limit
+        settings.rate_limit_window_seconds = original_window
+
+
+def test_price_checks_dead_letter_after_repeated_failures(monkeypatch) -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+    created = client.post(
+        "/watchlist",
+        json={"url": "https://www.hema.nl/p/fail-item", "custom_label": "Fail item"},
+    )
+    assert created.status_code == 200
+    item_id = created.json()["item"]["id"]
+
+    class _FailingAdapter:
+        site_key = "hema"
+
+        def check(self, *_args, **_kwargs):
+            return AdapterCheckResult(
+                ok=False,
+                status="fetch_error",
+                error_kind="timeout",
+                error_message="simulated timeout",
+            )
+
+    monkeypatch.setattr(
+        "snipebot.domain.price_checks.get_adapter", lambda _site_key: _FailingAdapter()
+    )
+
+    settings = get_settings()
+    original_threshold = settings.dead_letter_failure_threshold
+    original_retry = settings.retry_interval_seconds
+    original_backoff = settings.retry_backoff_multiplier
+    original_max_retry = settings.retry_max_interval_seconds
+
+    settings.dead_letter_failure_threshold = 2
+    settings.retry_interval_seconds = 1
+    settings.retry_backoff_multiplier = 2
+    settings.retry_max_interval_seconds = 60
+    try:
+        from snipebot.persistence.db import get_session_factory
+
+        session_factory = get_session_factory()
+        for _ in range(2):
+            with get_engine().begin() as connection:
+                connection.execute(
+                    text(
+                        "UPDATE watch_items SET next_check_at = :due WHERE id = :item_id"
+                    ),
+                    {
+                        "due": datetime.now(UTC) - timedelta(seconds=1),
+                        "item_id": item_id,
+                    },
+                )
+            with session_factory() as db_session:
+                run_due_price_checks(db_session, settings)
+
+        item_response = client.get(f"/watchlist/{item_id}")
+        assert item_response.status_code == 200
+        detail = item_response.json()["item"]
+        assert detail["dead_lettered_at"] is not None
+        assert detail["active"] is False
+        assert detail["consecutive_failure_count"] >= 2
+    finally:
+        settings.dead_letter_failure_threshold = original_threshold
+        settings.retry_interval_seconds = original_retry
+        settings.retry_backoff_multiplier = original_backoff
+        settings.retry_max_interval_seconds = original_max_retry
 
 
 def test_settings_get_defaults_and_patch_persists() -> None:

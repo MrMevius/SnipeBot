@@ -66,6 +66,7 @@ describe("App", () => {
                 last_checked_at: null,
                 last_status: "pending",
                 archived_at: null,
+                tags: [],
               },
             ],
             total: 1,
@@ -75,6 +76,23 @@ describe("App", () => {
         };
       }
 
+      if (url.endsWith("/watchlist/health")) {
+        return {
+          ok: true,
+          json: async () => ({
+            owner_id: "local",
+            total: 1,
+            active: 1,
+            archived: 0,
+            stale: 0,
+            error: 0,
+            dead_lettered: 0,
+          }),
+        };
+      }
+      if (url.endsWith("/watchlist/tags")) {
+        return { ok: true, json: async () => ({ tags: [] }) };
+      }
       throw new Error(`Unexpected URL ${url}`);
     });
 
@@ -82,7 +100,7 @@ describe("App", () => {
     expect(screen.getByText("SnipeBot Watchlist")).toBeTruthy();
     expect(await screen.findByText("Lamp")).toBeTruthy();
     expect(screen.getByText("hema")).toBeTruthy();
-    expect(await screen.findByText("Lo:")).toBeTruthy();
+    expect(await screen.findByText(/Lo:/)).toBeTruthy();
   });
 
   it("submits form and refreshes list", async () => {
@@ -151,6 +169,7 @@ describe("App", () => {
               current_price: null,
               last_checked_at: null,
               last_status: "pending",
+              tags: [],
             },
           }),
         };
@@ -177,6 +196,7 @@ describe("App", () => {
                         last_checked_at: null,
                         last_status: "pending",
                         archived_at: null,
+                        tags: [],
                       },
                     ],
               total: watchlistCalls === 1 ? 0 : 1,
@@ -186,6 +206,23 @@ describe("App", () => {
         };
       }
 
+      if (url.endsWith("/watchlist/health")) {
+        return {
+          ok: true,
+          json: async () => ({
+            owner_id: "local",
+            total: watchlistCalls === 1 ? 0 : 1,
+            active: watchlistCalls === 1 ? 0 : 1,
+            archived: 0,
+            stale: 0,
+            error: 0,
+            dead_lettered: 0,
+          }),
+        };
+      }
+      if (url.endsWith("/watchlist/tags")) {
+        return { ok: true, json: async () => ({ tags: [] }) };
+      }
       throw new Error(`Unexpected URL ${url}`);
     });
 
@@ -243,6 +280,23 @@ describe("App", () => {
         };
       }
 
+      if (url.endsWith("/watchlist/health")) {
+        return {
+          ok: true,
+          json: async () => ({
+            owner_id: "local",
+            total: 0,
+            active: 0,
+            archived: 0,
+            stale: 0,
+            error: 0,
+            dead_lettered: 0,
+          }),
+        };
+      }
+      if (url.endsWith("/watchlist/tags")) {
+        return { ok: true, json: async () => ({ tags: [] }) };
+      }
       throw new Error(`Unexpected URL ${url}`);
     });
 
@@ -331,6 +385,7 @@ describe("App", () => {
               current_price: 24,
               last_checked_at: "2026-04-05T10:00:00Z",
               last_status: "ok",
+              tags: [],
             },
             lows: {
               low_7d: 24,
@@ -355,6 +410,7 @@ describe("App", () => {
             current_price: 24,
             last_checked_at: "2026-04-05T10:00:00Z",
             last_status: "ok",
+            tags: [],
           }),
         };
       }
@@ -375,6 +431,7 @@ describe("App", () => {
               current_price: 24,
               last_checked_at: "2026-04-05T10:00:00Z",
               last_status: "ok",
+              tags: [],
             },
           }),
         };
@@ -397,6 +454,7 @@ describe("App", () => {
                 last_checked_at: "2026-04-05T10:00:00Z",
                 last_status: "ok",
                 archived_at: null,
+                tags: [],
               },
             ],
             total: 1,
@@ -406,6 +464,23 @@ describe("App", () => {
         };
       }
 
+      if (url.endsWith("/watchlist/health")) {
+        return {
+          ok: true,
+          json: async () => ({
+            owner_id: "local",
+            total: 1,
+            active: 1,
+            archived: 0,
+            stale: 0,
+            error: 0,
+            dead_lettered: 0,
+          }),
+        };
+      }
+      if (url.endsWith("/watchlist/tags")) {
+        return { ok: true, json: async () => ({ tags: [] }) };
+      }
       throw new Error(`Unexpected URL ${url}`);
     });
 
@@ -504,6 +579,7 @@ describe("App", () => {
                     last_checked_at: null,
                     last_status: "pending",
                     archived_at: null,
+                    tags: [],
                   },
                 ]
               : [
@@ -519,6 +595,7 @@ describe("App", () => {
                     last_checked_at: null,
                     last_status: "pending",
                     archived_at: null,
+                    tags: [],
                   },
                   {
                     id: 2,
@@ -532,6 +609,7 @@ describe("App", () => {
                     last_checked_at: null,
                     last_status: "pending",
                     archived_at: null,
+                    tags: [],
                   },
                 ],
             total: archived ? 1 : 2,
@@ -541,6 +619,23 @@ describe("App", () => {
         };
       }
 
+      if (url.endsWith("/watchlist/health")) {
+        return {
+          ok: true,
+          json: async () => ({
+            owner_id: "local",
+            total: archived ? 1 : 2,
+            active: archived ? 1 : 2,
+            archived: 0,
+            stale: 0,
+            error: 0,
+            dead_lettered: 0,
+          }),
+        };
+      }
+      if (url.endsWith("/watchlist/tags")) {
+        return { ok: true, json: async () => ({ tags: [] }) };
+      }
       throw new Error(`Unexpected URL ${url}`);
     });
 
@@ -548,8 +643,8 @@ describe("App", () => {
 
     expect(await screen.findByText("Lamp")).toBeTruthy();
     fireEvent.click(screen.getByLabelText("Select item 1"));
-    fireEvent.change(screen.getByLabelText("Bulk action"), { target: { value: "archive" } });
-    fireEvent.click(screen.getByText("Apply to selected (1)"));
+    fireEvent.change(screen.getByLabelText("Bulk"), { target: { value: "archive" } });
+    fireEvent.click(screen.getByText("Apply (1)"));
 
     expect(await screen.findByText("Bulk archive completed: 1 updated, 0 failed.")).toBeTruthy();
     await waitFor(() => {
@@ -594,12 +689,30 @@ describe("App", () => {
         };
       }
 
+      if (url.endsWith("/watchlist/health")) {
+        return {
+          ok: true,
+          json: async () => ({
+            owner_id: "local",
+            total: 0,
+            active: 0,
+            archived: 0,
+            stale: 0,
+            error: 0,
+            dead_lettered: 0,
+          }),
+        };
+      }
+      if (url.endsWith("/watchlist/tags")) {
+        return { ok: true, json: async () => ({ tags: [] }) };
+      }
       throw new Error(`Unexpected URL ${url}`);
     });
 
     render(<App />);
 
-    fireEvent.click(await screen.findByText("Open settings"));
+    fireEvent.click(await screen.findByText("Menu"));
+    fireEvent.click(screen.getByText("Settings"));
 
     fireEvent.click(screen.getByLabelText("Notifications enabled"));
     fireEvent.click(screen.getByLabelText("Telegram channel enabled"));

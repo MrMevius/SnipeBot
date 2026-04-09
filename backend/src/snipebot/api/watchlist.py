@@ -1,22 +1,37 @@
 from datetime import datetime
 from decimal import Decimal
+import csv
+import io
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
+from snipebot.api.deps import (
+    RequestIdentity,
+    enforce_write_rate_limit,
+    get_request_identity,
+)
 from snipebot.adapters.sites.registry import detect_site_key, get_adapter
 from snipebot.core.config import get_settings
+from snipebot.core.metrics import metrics
 from snipebot.domain.services import (
     archive_watch_item,
     bulk_update_watch_items,
+    export_watch_items_rows,
+    get_or_create_watch_tag,
     restore_watch_item,
+    import_watch_items_rows,
     get_watch_item_lows,
+    get_watchlist_health_summary,
     deactivate_watch_item,
     get_watch_item_price_history,
     list_watch_item_alert_events,
     list_watch_items_paginated,
+    list_watch_tags,
     normalize_product_url,
+    set_watch_item_tags,
     trigger_watch_item_check_now,
     update_watch_item,
     upsert_watch_item,
@@ -45,6 +60,10 @@ class WatchItemResponse(BaseModel):
     last_checked_at: datetime | None
     last_status: str
     archived_at: datetime | None
+    consecutive_failure_count: int
+    dead_lettered_at: datetime | None
+    dead_letter_reason: str | None
+    tags: list[str]
 
 
 class WatchlistResponse(BaseModel):
@@ -141,6 +160,57 @@ class BulkWatchItemResponse(BaseModel):
     failed: list[BulkWatchItemFailure]
 
 
+class WatchTagResponse(BaseModel):
+    id: int
+    name: str
+
+
+class WatchTagListResponse(BaseModel):
+    tags: list[WatchTagResponse]
+
+
+class CreateWatchTagRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+
+
+class SetWatchItemTagsRequest(BaseModel):
+    tags: list[str] = Field(default_factory=list)
+
+
+class ImportWatchlistRequest(BaseModel):
+    items: list[dict[str, object]] = Field(default_factory=list)
+
+
+class ImportWatchlistRowResult(BaseModel):
+    row: int
+    status: str
+    url: str | None = None
+    normalized_url: str | None = None
+    error: str | None = None
+
+
+class ImportWatchlistSummary(BaseModel):
+    created: int
+    updated: int
+    error: int
+
+
+class ImportWatchlistResponse(BaseModel):
+    dry_run: bool
+    summary: ImportWatchlistSummary
+    rows: list[ImportWatchlistRowResult]
+
+
+class WatchlistHealthResponse(BaseModel):
+    owner_id: str
+    total: int
+    active: int
+    archived: int
+    stale: int
+    error: int
+    dead_lettered: int
+
+
 def _money_to_float(value: Decimal | None) -> float | None:
     if value is None:
         return None
@@ -160,18 +230,33 @@ def _to_response(item: WatchItem) -> WatchItemResponse:
         last_checked_at=item.last_checked_at,
         last_status=item.last_status,
         archived_at=item.archived_at,
+        consecutive_failure_count=item.consecutive_failure_count,
+        dead_lettered_at=item.dead_lettered_at,
+        dead_letter_reason=item.dead_letter_reason,
+        tags=[
+            tag.name for tag in sorted(item.tags, key=lambda entry: entry.name.lower())
+        ],
     )
+
+
+def _resolve_owner(identity: RequestIdentity) -> str:
+    return identity.owner_id
 
 
 @router.post("", response_model=UpsertWatchItemResponse)
 def create_or_update_watch_item(
     payload: WatchItemCreateRequest,
+    request: Request,
+    identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
 ) -> UpsertWatchItemResponse:
+    enforce_write_rate_limit(request, identity)
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.upsert")
     try:
         item, operation = upsert_watch_item(
             db_session,
-            owner_id="local",
+            owner_id=owner_id,
             url=payload.url,
             custom_label=payload.custom_label,
             target_price=payload.target_price,
@@ -193,11 +278,15 @@ def get_watchlist(
     offset: int = Query(default=0, ge=0),
     include_archived: bool = False,
     archived_only: bool = False,
+    tag: str | None = Query(default=None, max_length=64),
+    identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
 ) -> WatchlistResponse:
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.list")
     items, total, safe_limit, safe_offset = list_watch_items_paginated(
         db_session,
-        owner_id="local",
+        owner_id=owner_id,
         active=active,
         site_key=site_key,
         has_target=has_target,
@@ -207,6 +296,7 @@ def get_watchlist(
         offset=offset,
         include_archived=include_archived,
         archived_only=archived_only,
+        tag=tag,
     )
     return WatchlistResponse(
         items=[_to_response(item) for item in items],
@@ -216,11 +306,194 @@ def get_watchlist(
     )
 
 
+@router.get("/health", response_model=WatchlistHealthResponse)
+def get_watchlist_health(
+    identity: RequestIdentity = Depends(get_request_identity),
+    db_session: Session = Depends(get_db_session),
+) -> WatchlistHealthResponse:
+    owner_id = _resolve_owner(identity)
+    settings = get_settings()
+    summary = get_watchlist_health_summary(
+        db_session,
+        owner_id=owner_id,
+        stale_after_seconds=settings.check_interval_seconds * 2,
+    )
+    metrics.inc("api.watchlist.health")
+    return WatchlistHealthResponse(owner_id=owner_id, **summary)
+
+
+@router.get("/tags", response_model=WatchTagListResponse)
+def get_watchlist_tags(
+    identity: RequestIdentity = Depends(get_request_identity),
+    db_session: Session = Depends(get_db_session),
+) -> WatchTagListResponse:
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.tags_list")
+    tags = list_watch_tags(db_session, owner_id=owner_id)
+    return WatchTagListResponse(
+        tags=[WatchTagResponse(id=tag.id, name=tag.name) for tag in tags]
+    )
+
+
+@router.post("/tags", response_model=WatchTagResponse)
+def create_watchlist_tag(
+    payload: CreateWatchTagRequest,
+    request: Request,
+    identity: RequestIdentity = Depends(get_request_identity),
+    db_session: Session = Depends(get_db_session),
+) -> WatchTagResponse:
+    enforce_write_rate_limit(request, identity)
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.tags_create")
+    try:
+        tag = get_or_create_watch_tag(db_session, owner_id=owner_id, name=payload.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return WatchTagResponse(id=tag.id, name=tag.name)
+
+
+@router.patch("/{item_id}/tags", response_model=WatchItemResponse)
+def patch_watch_item_tags(
+    item_id: int,
+    payload: SetWatchItemTagsRequest,
+    request: Request,
+    identity: RequestIdentity = Depends(get_request_identity),
+    db_session: Session = Depends(get_db_session),
+) -> WatchItemResponse:
+    enforce_write_rate_limit(request, identity)
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.tags_patch")
+    try:
+        item = set_watch_item_tags(
+            db_session,
+            owner_id=owner_id,
+            item_id=item_id,
+            tag_names=payload.tags,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if item is None:
+        raise HTTPException(status_code=404, detail="Watch item not found")
+    return _to_response(item)
+
+
+@router.get("/export")
+def export_watchlist(
+    format: str = Query(default="json", pattern="^(json|csv)$"),
+    active: bool | None = None,
+    site_key: str | None = Query(default=None, max_length=64),
+    has_target: bool | None = None,
+    q: str | None = Query(default=None, max_length=255),
+    sort: str = Query(default="updated_desc", max_length=32),
+    include_archived: bool = False,
+    archived_only: bool = False,
+    tag: str | None = Query(default=None, max_length=64),
+    identity: RequestIdentity = Depends(get_request_identity),
+    db_session: Session = Depends(get_db_session),
+):
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.export")
+    rows = export_watch_items_rows(
+        db_session,
+        owner_id=owner_id,
+        active=active,
+        site_key=site_key,
+        has_target=has_target,
+        query=q,
+        sort=sort,
+        include_archived=include_archived,
+        archived_only=archived_only,
+        tag=tag,
+    )
+
+    if format == "json":
+        return JSONResponse(content={"items": rows, "count": len(rows)})
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "id",
+            "url",
+            "custom_label",
+            "target_price",
+            "site_key",
+            "active",
+            "archived_at",
+            "tags",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                row["id"],
+                row["url"],
+                row["custom_label"],
+                row["target_price"],
+                row["site_key"],
+                row["active"],
+                row["archived_at"],
+                ", ".join(row["tags"]),
+            ]
+        )
+    output.seek(0)
+    filename = f"watchlist-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/import", response_model=ImportWatchlistResponse)
+def import_watchlist(
+    payload: ImportWatchlistRequest,
+    request: Request,
+    dry_run: bool = True,
+    identity: RequestIdentity = Depends(get_request_identity),
+    db_session: Session = Depends(get_db_session),
+) -> ImportWatchlistResponse:
+    enforce_write_rate_limit(request, identity)
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.import")
+    row_results, summary = import_watch_items_rows(
+        db_session,
+        owner_id=owner_id,
+        rows=payload.items,
+        dry_run=dry_run,
+    )
+
+    return ImportWatchlistResponse(
+        dry_run=dry_run,
+        summary=ImportWatchlistSummary(
+            created=summary["created"],
+            updated=summary["updated"],
+            error=summary["error"],
+        ),
+        rows=[
+            ImportWatchlistRowResult(
+                row=entry["row"],
+                status=entry["status"],
+                url=entry.get("url"),
+                normalized_url=entry.get("normalized_url"),
+                error=entry.get("error"),
+            )
+            for entry in row_results
+        ],
+    )
+
+
 @router.post("/bulk", response_model=BulkWatchItemResponse)
 def bulk_watch_items(
     payload: BulkWatchItemRequest,
+    request: Request,
+    identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
 ) -> BulkWatchItemResponse:
+    enforce_write_rate_limit(request, identity)
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.bulk")
     if payload.action not in {"pause", "resume", "archive", "set_target"}:
         raise HTTPException(status_code=422, detail="Unsupported bulk action")
 
@@ -235,7 +508,7 @@ def bulk_watch_items(
 
     updated, failed = bulk_update_watch_items(
         db_session,
-        owner_id="local",
+        owner_id=owner_id,
         item_ids=payload.item_ids,
         action=payload.action,
         target_price=payload.target_price,
@@ -254,6 +527,7 @@ def bulk_watch_items(
 def preview_watch_item_url(
     url: str = Query(min_length=1, max_length=2048),
 ) -> WatchItemPreviewResponse:
+    metrics.inc("api.watchlist.preview")
     try:
         normalized_url = normalize_product_url(url)
     except ValueError as exc:
@@ -290,11 +564,14 @@ def preview_watch_item_url(
 @router.get("/{item_id}", response_model=WatchItemDetailResponse)
 def get_watch_item_detail(
     item_id: int,
+    identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
 ) -> WatchItemDetailResponse:
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.detail")
     item, low_7d, low_30d, all_time_low = get_watch_item_lows(
         db_session,
-        owner_id="local",
+        owner_id=owner_id,
         item_id=item_id,
     )
     if item is None:
@@ -314,12 +591,17 @@ def get_watch_item_detail(
 def patch_watch_item(
     item_id: int,
     payload: WatchItemUpdateRequest,
+    request: Request,
+    identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
 ) -> WatchItemResponse:
+    enforce_write_rate_limit(request, identity)
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.patch")
     update_fields = payload.model_fields_set
     item = update_watch_item(
         db_session,
-        owner_id="local",
+        owner_id=owner_id,
         item_id=item_id,
         custom_label=payload.custom_label,
         target_price=payload.target_price,
@@ -338,9 +620,14 @@ def patch_watch_item(
 @router.post("/{item_id}/check-now", response_model=CheckNowResponse)
 def check_now_watch_item(
     item_id: int,
+    request: Request,
+    identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
 ) -> CheckNowResponse:
-    item = trigger_watch_item_check_now(db_session, owner_id="local", item_id=item_id)
+    enforce_write_rate_limit(request, identity)
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.check_now")
+    item = trigger_watch_item_check_now(db_session, owner_id=owner_id, item_id=item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Watch item not found")
     return CheckNowResponse(
@@ -353,11 +640,14 @@ def check_now_watch_item(
 def get_watch_item_alert_history(
     item_id: int,
     limit: int = 25,
+    identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
 ) -> AlertHistoryResponse:
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.alerts")
     item, events = list_watch_item_alert_events(
         db_session,
-        owner_id="local",
+        owner_id=owner_id,
         item_id=item_id,
         limit=limit,
     )
@@ -385,9 +675,15 @@ def get_watch_item_alert_history(
 
 @router.patch("/{item_id}/deactivate", response_model=WatchItemResponse)
 def deactivate_item(
-    item_id: int, db_session: Session = Depends(get_db_session)
+    item_id: int,
+    request: Request,
+    identity: RequestIdentity = Depends(get_request_identity),
+    db_session: Session = Depends(get_db_session),
 ) -> WatchItemResponse:
-    item = deactivate_watch_item(db_session, owner_id="local", item_id=item_id)
+    enforce_write_rate_limit(request, identity)
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.deactivate")
+    item = deactivate_watch_item(db_session, owner_id=owner_id, item_id=item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Watch item not found")
     return _to_response(item)
@@ -395,9 +691,15 @@ def deactivate_item(
 
 @router.post("/{item_id}/archive", response_model=WatchItemResponse)
 def archive_item(
-    item_id: int, db_session: Session = Depends(get_db_session)
+    item_id: int,
+    request: Request,
+    identity: RequestIdentity = Depends(get_request_identity),
+    db_session: Session = Depends(get_db_session),
 ) -> WatchItemResponse:
-    item = archive_watch_item(db_session, owner_id="local", item_id=item_id)
+    enforce_write_rate_limit(request, identity)
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.archive")
+    item = archive_watch_item(db_session, owner_id=owner_id, item_id=item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Watch item not found")
     return _to_response(item)
@@ -405,9 +707,15 @@ def archive_item(
 
 @router.post("/{item_id}/restore", response_model=WatchItemResponse)
 def restore_item(
-    item_id: int, db_session: Session = Depends(get_db_session)
+    item_id: int,
+    request: Request,
+    identity: RequestIdentity = Depends(get_request_identity),
+    db_session: Session = Depends(get_db_session),
 ) -> WatchItemResponse:
-    item = restore_watch_item(db_session, owner_id="local", item_id=item_id)
+    enforce_write_rate_limit(request, identity)
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.restore")
+    item = restore_watch_item(db_session, owner_id=owner_id, item_id=item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Watch item not found")
     return _to_response(item)
@@ -417,11 +725,14 @@ def restore_item(
 def get_watch_item_history(
     item_id: int,
     days: int = 30,
+    identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
 ) -> WatchItemHistoryResponse:
+    owner_id = _resolve_owner(identity)
+    metrics.inc("api.watchlist.history")
     item, checks = get_watch_item_price_history(
         db_session,
-        owner_id="local",
+        owner_id=owner_id,
         item_id=item_id,
         days=days,
     )

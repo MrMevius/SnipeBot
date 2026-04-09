@@ -6,7 +6,12 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from snipebot.adapters.sites.registry import detect_site_key
-from snipebot.persistence.models import AlertEvent, PriceCheck, WatchItem
+from snipebot.persistence.models import (
+    AlertEvent,
+    PriceCheck,
+    WatchItem,
+    WatchItemTag,
+)
 
 TRACKING_QUERY_KEYS = {
     "fbclid",
@@ -15,6 +20,27 @@ TRACKING_QUERY_KEYS = {
     "ref_src",
     "source",
 }
+
+
+def _normalize_tag_name(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError("Tag name cannot be empty")
+    if len(cleaned) > 64:
+        raise ValueError("Tag name cannot exceed 64 characters")
+    return cleaned
+
+
+def _normalize_tag_list(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+
+    dedup: dict[str, str] = {}
+    for value in values:
+        normalized = _normalize_tag_name(value)
+        key = normalized.lower()
+        dedup[key] = normalized
+    return sorted(dedup.values(), key=lambda tag: tag.lower())
 
 
 def normalize_product_url(url: str) -> str:
@@ -81,6 +107,9 @@ def upsert_watch_item(
         existing.site_key = site_key
         existing.active = True
         existing.archived_at = None
+        existing.dead_lettered_at = None
+        existing.dead_letter_reason = None
+        existing.consecutive_failure_count = 0
         if existing.next_check_at is None:
             existing.next_check_at = datetime.now(UTC)
         db_session.commit()
@@ -125,6 +154,7 @@ def list_watch_items_paginated(
     offset: int = 0,
     include_archived: bool = False,
     archived_only: bool = False,
+    tag: str | None = None,
 ) -> tuple[list[WatchItem], int, int, int]:
     safe_limit = max(1, min(limit, 200))
     safe_offset = max(0, offset)
@@ -145,6 +175,12 @@ def list_watch_items_paginated(
             statement = statement.where(WatchItem.target_price.is_not(None))
         else:
             statement = statement.where(WatchItem.target_price.is_(None))
+
+    cleaned_tag = tag.strip() if tag else ""
+    if cleaned_tag:
+        statement = statement.where(
+            WatchItem.tags.any(func.lower(WatchItemTag.name) == cleaned_tag.lower())
+        )
 
     cleaned_query = query.strip() if query else ""
     if cleaned_query:
@@ -295,6 +331,244 @@ def get_watch_item(
     )
 
 
+def list_watch_tags(db_session: Session, *, owner_id: str) -> list[WatchItemTag]:
+    statement = (
+        select(WatchItemTag)
+        .where(WatchItemTag.owner_id == owner_id)
+        .order_by(func.lower(WatchItemTag.name).asc(), WatchItemTag.id.asc())
+    )
+    return list(db_session.scalars(statement).all())
+
+
+def get_or_create_watch_tag(
+    db_session: Session,
+    *,
+    owner_id: str,
+    name: str,
+) -> WatchItemTag:
+    normalized = _normalize_tag_name(name)
+    existing = db_session.scalar(
+        select(WatchItemTag).where(
+            WatchItemTag.owner_id == owner_id,
+            func.lower(WatchItemTag.name) == normalized.lower(),
+        )
+    )
+    if existing is not None:
+        return existing
+
+    tag = WatchItemTag(owner_id=owner_id, name=normalized)
+    db_session.add(tag)
+    db_session.commit()
+    db_session.refresh(tag)
+    return tag
+
+
+def set_watch_item_tags(
+    db_session: Session,
+    *,
+    owner_id: str,
+    item_id: int,
+    tag_names: list[str],
+) -> WatchItem | None:
+    item = get_watch_item(db_session, owner_id=owner_id, item_id=item_id)
+    if item is None:
+        return None
+
+    normalized_tags = _normalize_tag_list(tag_names)
+    if not normalized_tags:
+        item.tags = []
+        db_session.commit()
+        db_session.refresh(item)
+        return item
+
+    statement = select(WatchItemTag).where(
+        WatchItemTag.owner_id == owner_id,
+        func.lower(WatchItemTag.name).in_([entry.lower() for entry in normalized_tags]),
+    )
+    existing_tags = list(db_session.scalars(statement).all())
+    by_lower = {tag.name.lower(): tag for tag in existing_tags}
+
+    for candidate in normalized_tags:
+        if candidate.lower() in by_lower:
+            continue
+        created = WatchItemTag(owner_id=owner_id, name=candidate)
+        db_session.add(created)
+        db_session.flush()
+        by_lower[candidate.lower()] = created
+
+    item.tags = [by_lower[entry.lower()] for entry in normalized_tags]
+    db_session.commit()
+    db_session.refresh(item)
+    return item
+
+
+def export_watch_items_rows(
+    db_session: Session,
+    *,
+    owner_id: str,
+    active: bool | None = None,
+    site_key: str | None = None,
+    has_target: bool | None = None,
+    query: str | None = None,
+    sort: str = "updated_desc",
+    include_archived: bool = False,
+    archived_only: bool = False,
+    tag: str | None = None,
+) -> list[dict[str, object]]:
+    items, _, _, _ = list_watch_items_paginated(
+        db_session,
+        owner_id=owner_id,
+        active=active,
+        site_key=site_key,
+        has_target=has_target,
+        query=query,
+        sort=sort,
+        limit=1000,
+        offset=0,
+        include_archived=include_archived,
+        archived_only=archived_only,
+        tag=tag,
+    )
+
+    rows: list[dict[str, object]] = []
+    for item in items:
+        rows.append(
+            {
+                "id": item.id,
+                "url": item.url,
+                "custom_label": item.custom_label,
+                "target_price": float(item.target_price)
+                if item.target_price is not None
+                else None,
+                "site_key": item.site_key,
+                "active": item.active,
+                "archived_at": item.archived_at.isoformat()
+                if item.archived_at
+                else None,
+                "tags": [
+                    tag.name
+                    for tag in sorted(item.tags, key=lambda entry: entry.name.lower())
+                ],
+            }
+        )
+    return rows
+
+
+def import_watch_items_rows(
+    db_session: Session,
+    *,
+    owner_id: str,
+    rows: list[dict[str, object]],
+    dry_run: bool,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    row_results: list[dict[str, object]] = []
+    created = 0
+    updated = 0
+    errored = 0
+
+    for index, row in enumerate(rows, start=1):
+        try:
+            if not isinstance(row, dict):
+                raise ValueError("Each row must be an object")
+
+            url = str(row.get("url", "")).strip()
+            if not url:
+                raise ValueError("url is required")
+
+            custom_label_raw = row.get("custom_label")
+            custom_label = (
+                str(custom_label_raw).strip()
+                if custom_label_raw not in {None, ""}
+                else None
+            )
+
+            target_raw = row.get("target_price")
+            target_price: Decimal | None = None
+            if target_raw not in {None, ""}:
+                target_price = Decimal(str(target_raw))
+                if target_price <= 0:
+                    raise ValueError("target_price must be positive")
+
+            notes_raw = row.get("notes")
+            notes = str(notes_raw).strip() if notes_raw not in {None, ""} else None
+
+            tags_raw = row.get("tags")
+            if tags_raw is None:
+                tag_names: list[str] = []
+            elif isinstance(tags_raw, list):
+                tag_names = [str(entry) for entry in tags_raw]
+            elif isinstance(tags_raw, str):
+                tag_names = [
+                    entry.strip() for entry in tags_raw.split(",") if entry.strip()
+                ]
+            else:
+                raise ValueError("tags must be a list or comma-separated string")
+
+            normalized_url = normalize_product_url(url)
+            existing = db_session.scalar(
+                select(WatchItem).where(
+                    WatchItem.owner_id == owner_id,
+                    WatchItem.normalized_url == normalized_url,
+                )
+            )
+            operation = "updated" if existing is not None else "created"
+
+            row_results.append(
+                {
+                    "row": index,
+                    "status": operation,
+                    "url": url,
+                    "normalized_url": normalized_url,
+                }
+            )
+
+            if operation == "created":
+                created += 1
+            else:
+                updated += 1
+
+            if dry_run:
+                continue
+
+            item, _ = upsert_watch_item(
+                db_session,
+                owner_id=owner_id,
+                url=url,
+                custom_label=custom_label,
+                target_price=target_price,
+            )
+            if notes is not None:
+                update_watch_item(
+                    db_session,
+                    owner_id=owner_id,
+                    item_id=item.id,
+                    notes=notes,
+                    set_notes=True,
+                )
+            set_watch_item_tags(
+                db_session,
+                owner_id=owner_id,
+                item_id=item.id,
+                tag_names=tag_names,
+            )
+        except Exception as exc:
+            errored += 1
+            row_results.append(
+                {
+                    "row": index,
+                    "status": "error",
+                    "error": str(exc),
+                }
+            )
+
+    summary = {
+        "created": created,
+        "updated": updated,
+        "error": errored,
+    }
+    return row_results, summary
+
+
 def update_watch_item(
     db_session: Session,
     *,
@@ -338,6 +612,9 @@ def trigger_watch_item_check_now(
         return None
 
     item.active = True
+    item.dead_lettered_at = None
+    item.dead_letter_reason = None
+    item.consecutive_failure_count = 0
     item.next_check_at = datetime.now(UTC)
     db_session.commit()
     db_session.refresh(item)
@@ -441,3 +718,72 @@ def get_watch_item_lows(
         float(low_30d) if low_30d is not None else None,
         float(all_time_low) if all_time_low is not None else None,
     )
+
+
+def get_watchlist_health_summary(
+    db_session: Session,
+    *,
+    owner_id: str,
+    stale_after_seconds: int,
+) -> dict[str, int]:
+    now = datetime.now(UTC)
+    stale_before = now - timedelta(seconds=max(60, stale_after_seconds))
+
+    base = select(WatchItem).where(WatchItem.owner_id == owner_id)
+    total = db_session.scalar(select(func.count()).select_from(base.subquery())) or 0
+    active = (
+        db_session.scalar(
+            select(func.count()).select_from(
+                base.where(WatchItem.active.is_(True)).subquery()
+            )
+        )
+        or 0
+    )
+    archived = (
+        db_session.scalar(
+            select(func.count()).select_from(
+                base.where(WatchItem.archived_at.is_not(None)).subquery()
+            )
+        )
+        or 0
+    )
+    stale = (
+        db_session.scalar(
+            select(func.count()).select_from(
+                base.where(
+                    WatchItem.active.is_(True),
+                    WatchItem.last_checked_at.is_not(None),
+                    WatchItem.last_checked_at < stale_before,
+                ).subquery()
+            )
+        )
+        or 0
+    )
+    error = (
+        db_session.scalar(
+            select(func.count()).select_from(
+                base.where(
+                    WatchItem.last_status.notin_(["ok", "pending"]),
+                    WatchItem.last_checked_at.is_not(None),
+                ).subquery()
+            )
+        )
+        or 0
+    )
+    dead_lettered = (
+        db_session.scalar(
+            select(func.count()).select_from(
+                base.where(WatchItem.dead_lettered_at.is_not(None)).subquery()
+            )
+        )
+        or 0
+    )
+
+    return {
+        "total": int(total),
+        "active": int(active),
+        "archived": int(archived),
+        "stale": int(stale),
+        "error": int(error),
+        "dead_lettered": int(dead_lettered),
+    }
