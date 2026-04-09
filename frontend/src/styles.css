@@ -31,6 +31,38 @@ body {
   padding: 0 16px;
 }
 
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #1f6feb;
+  background: #1f6feb;
+  color: #fff;
+  border-radius: 6px;
+  padding: 8px 12px;
+  text-decoration: none;
+  font-size: 14px;
+}
+
 .panel {
   background: var(--panel-bg);
   border-radius: 8px;
@@ -52,6 +84,37 @@ body {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.compact-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.inline-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.inline-field span {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.small-inline-field {
+  min-width: 150px;
 }
 
 input {
@@ -138,6 +201,13 @@ td {
   color: var(--text);
 }
 
+.insights-inline {
+  display: grid;
+  gap: 2px;
+  min-width: 160px;
+  font-size: 11px;
+}
+
 .insight-row {
   font-size: 12px;
   margin-bottom: 2px;
@@ -216,6 +286,60 @@ td {
 .actions-row {
   display: flex;
   gap: 8px;
+}
+
+.compact-actions-row {
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.compact-count {
+  margin-left: auto;
+}
+
+.menu-panel {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.menu-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.compact-table th,
+.compact-table td {
+  padding: 6px;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+.product-link {
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  max-width: 220px;
+}
+
+.compact-tag-input {
+  width: 100%;
+  min-width: 120px;
+  padding: 6px 8px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.compact-cell-sub {
+  display: block;
+  margin-top: 2px;
 }
 
 .snapshot-grid {
@@ -353,6 +477,20 @@ td {
 
 .manage-details[open] summary {
   margin-bottom: 4px;
+}
+
+@media (max-width: 980px) {
+  .filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .compact-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+  }
 }
 
 @keyframes chart-fade-in {

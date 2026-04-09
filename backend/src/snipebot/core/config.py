@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     telegram_enabled: bool = False
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    auth_default_owner_id: str = "local"
+    auth_header_name: str = "x-owner-id"
+    rate_limit_write_requests_per_minute: int = 60
+    rate_limit_window_seconds: int = 60
+    dead_letter_failure_threshold: int = 5
+    retry_backoff_multiplier: int = 2
+    retry_max_interval_seconds: int = 3600
 
     @property
     def is_sqlite(self) -> bool:
@@ -52,6 +59,23 @@ def get_settings() -> Settings:
         in {"1", "true", "yes", "on"},
         telegram_bot_token=_get_env("SNIPEBOT_TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=_get_env("SNIPEBOT_TELEGRAM_CHAT_ID", ""),
+        auth_default_owner_id=_get_env("SNIPEBOT_AUTH_DEFAULT_OWNER_ID", "local"),
+        auth_header_name=_get_env("SNIPEBOT_AUTH_HEADER_NAME", "x-owner-id"),
+        rate_limit_write_requests_per_minute=int(
+            _get_env("SNIPEBOT_RATE_LIMIT_WRITE_REQUESTS_PER_MINUTE", "60")
+        ),
+        rate_limit_window_seconds=int(
+            _get_env("SNIPEBOT_RATE_LIMIT_WINDOW_SECONDS", "60")
+        ),
+        dead_letter_failure_threshold=int(
+            _get_env("SNIPEBOT_DEAD_LETTER_FAILURE_THRESHOLD", "5")
+        ),
+        retry_backoff_multiplier=int(
+            _get_env("SNIPEBOT_RETRY_BACKOFF_MULTIPLIER", "2")
+        ),
+        retry_max_interval_seconds=int(
+            _get_env("SNIPEBOT_RETRY_MAX_INTERVAL_SECONDS", "3600")
+        ),
     )
 
 

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from snipebot.adapters.sites.registry import get_adapter
 from snipebot.core.config import Settings
+from snipebot.core.metrics import metrics
 from snipebot.domain.alerts import AlertContext, decide_alerts, format_alert_message
 from snipebot.notifications.factory import build_notifier
 from snipebot.persistence.models import AlertEvent, PriceCheck, WatchItem
@@ -19,14 +20,18 @@ def run_due_price_checks(db_session: Session, settings: Settings) -> int:
     items = _get_due_items(db_session, settings.worker_batch_size)
     processed = 0
     notifier = build_notifier(settings)
+    metrics.inc("checks.batch_runs")
+    metrics.inc("checks.items_loaded", len(items))
 
     for item in items:
         processed += 1
         try:
             _run_check_for_item(db_session, item, settings, notifier=notifier)
             db_session.commit()
+            metrics.inc("checks.item_processed")
         except Exception as exc:  # pragma: no cover - safety net
             db_session.rollback()
+            metrics.inc("checks.item_unhandled_error")
             logger.exception(
                 "price_check.unhandled_error watch_item_id=%s site_key=%s reason=%s",
                 item.id,
@@ -43,6 +48,7 @@ def _get_due_items(db_session: Session, limit: int) -> list[WatchItem]:
         select(WatchItem)
         .where(
             WatchItem.active.is_(True),
+            WatchItem.dead_lettered_at.is_(None),
             or_(WatchItem.next_check_at.is_(None), WatchItem.next_check_at <= now),
         )
         .order_by(WatchItem.next_check_at.asc().nullsfirst(), WatchItem.id.asc())
@@ -92,10 +98,14 @@ def _run_check_for_item(
         item.last_status = "ok"
         item.last_error_kind = None
         item.last_error_message = None
+        item.consecutive_failure_count = 0
+        item.dead_lettered_at = None
+        item.dead_letter_reason = None
         item.successful_check_count += 1
         item.next_check_at = checked_at + timedelta(
             seconds=settings.check_interval_seconds
         )
+        metrics.inc("checks.status.ok")
 
         check = PriceCheck(
             watch_item_id=item.id,
@@ -156,10 +166,28 @@ def _record_failure(
     adapter_key: str,
     used_fallback: bool,
 ) -> None:
+    item.consecutive_failure_count += 1
+    backoff_base = max(1, retry_seconds)
+    multiplier = max(1, settings_retry_backoff_multiplier())
+    backoff_seconds = backoff_base * (
+        multiplier ** max(item.consecutive_failure_count - 1, 0)
+    )
+    backoff_seconds = min(backoff_seconds, settings_retry_max_interval_seconds())
+
     item.last_status = status
     item.last_error_kind = error_kind
     item.last_error_message = error_message
-    item.next_check_at = checked_at + timedelta(seconds=retry_seconds)
+    item.next_check_at = checked_at + timedelta(seconds=backoff_seconds)
+
+    threshold = settings_dead_letter_failure_threshold()
+    if item.consecutive_failure_count >= threshold:
+        item.active = False
+        item.dead_lettered_at = checked_at
+        item.dead_letter_reason = f"{error_kind}: {error_message or status}"
+        item.next_check_at = None
+        metrics.inc("checks.dead_lettered")
+
+    metrics.inc(f"checks.status.{status}")
 
     db_session.add(
         PriceCheck(
@@ -181,6 +209,24 @@ def _record_failure(
         error_kind,
         used_fallback,
     )
+
+
+def settings_dead_letter_failure_threshold() -> int:
+    from snipebot.core.config import get_settings
+
+    return max(1, get_settings().dead_letter_failure_threshold)
+
+
+def settings_retry_backoff_multiplier() -> int:
+    from snipebot.core.config import get_settings
+
+    return max(1, get_settings().retry_backoff_multiplier)
+
+
+def settings_retry_max_interval_seconds() -> int:
+    from snipebot.core.config import get_settings
+
+    return max(1, get_settings().retry_max_interval_seconds)
 
 
 def _dispatch_alerts_for_success(
