@@ -26,9 +26,9 @@ body {
 }
 
 .container {
-  max-width: 980px;
+  max-width: 1560px;
   margin: 24px auto;
-  padding: 0 16px;
+  padding: 0 20px;
 }
 
 .topbar {
@@ -337,6 +337,16 @@ td {
   flex-wrap: wrap;
 }
 
+.row-actions-compact {
+  flex-wrap: nowrap;
+}
+
+.compact-button {
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.1;
+}
+
 .compact-cell-sub {
   display: block;
   margin-top: 2px;
@@ -480,6 +490,11 @@ td {
 }
 
 @media (max-width: 980px) {
+  .container {
+    max-width: 100%;
+    padding: 0 16px;
+  }
+
   .filter-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

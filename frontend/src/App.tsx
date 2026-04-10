@@ -15,7 +15,6 @@ import {
   patchWatchItem,
   previewWatchItemByUrl,
   restoreWatchItem,
-  setWatchItemTags,
   setOwnerId,
   triggerWatchItemCheckNow,
   upsertWatchItem,
@@ -736,7 +735,6 @@ function ProductDetailPage({
 export function App() {
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
   const [items, setItems] = useState<WatchItem[]>([]);
-  const [histories, setHistories] = useState<Record<number, WatchItemHistoryResponse>>({});
   const [url, setUrl] = useState("");
   const [ownerId, setOwnerIdState] = useState(() => getOwnerId());
   const [customLabel, setCustomLabel] = useState("");
@@ -777,7 +775,6 @@ export function App() {
   const [bulkWorking, setBulkWorking] = useState(false);
   const [availableTags, setAvailableTags] = useState<WatchTag[]>([]);
   const [newTagName, setNewTagName] = useState("");
-  const [rowTagInputs, setRowTagInputs] = useState<Record<number, string>>({});
   const [health, setHealth] = useState<WatchlistHealthResponse | null>(null);
   const labelRef = useRef(customLabel);
   const labelDirtyRef = useRef(labelDirty);
@@ -878,27 +875,6 @@ export function App() {
     setItems(response.items);
     setTotal(response.total);
     setHealth(healthPayload);
-
-    const loadedHistories = await Promise.all(
-      response.items.map(async (item) => {
-        try {
-          const history = await fetchWatchItemHistory(item.id, 30);
-          return [item.id, history] as const;
-        } catch {
-          return null;
-        }
-      }),
-    );
-
-    setHistories((previous) => {
-      const next = { ...previous };
-      for (const entry of loadedHistories) {
-        if (entry) {
-          next[entry[0]] = entry[1];
-        }
-      }
-      return next;
-    });
   }
 
   useEffect(() => {
@@ -921,18 +897,6 @@ export function App() {
     setSelectedItemIds((previous) =>
       previous.filter((itemId) => items.some((item) => item.id === itemId)),
     );
-  }, [items]);
-
-  useEffect(() => {
-    setRowTagInputs((previous) => {
-      const next = { ...previous };
-      for (const item of items) {
-        if (!(item.id in next)) {
-          next[item.id] = item.tags.join(", ");
-        }
-      }
-      return next;
-    });
   }, [items]);
 
   useEffect(() => {
@@ -1171,26 +1135,6 @@ export function App() {
       });
       setNewTagName("");
       setFeedback(`Tag \"${created.name}\" saved.`);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
-
-  async function handleSaveItemTags(itemId: number) {
-    const raw = rowTagInputs[itemId] ?? "";
-    const tags = raw
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-
-    setError(null);
-    setFeedback(null);
-    try {
-      await setWatchItemTags(itemId, tags);
-      await loadWatchlist();
-      const payload = await fetchWatchTags();
-      setAvailableTags(payload.tags);
-      setFeedback("Tags saved.");
     } catch (err) {
       setError((err as Error).message);
     }
@@ -1684,10 +1628,7 @@ export function App() {
                     <th>Site</th>
                     <th>Target</th>
                     <th>Current</th>
-                    <th>Trend</th>
                     <th>Status</th>
-                    <th>Flags</th>
-                    <th>Tags</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -1718,58 +1659,13 @@ export function App() {
                       <td>{formatPrice(item.target_price, currencyDisplayMode)}</td>
                       <td>{formatPrice(item.current_price, currencyDisplayMode)}</td>
                       <td>
-                        {histories[item.id]?.checks_count ? (
-                          <div className="insights-inline">
-                            <span>
-                              L:{formatPrice(histories[item.id].latest_price, currencyDisplayMode)} · Lo:
-                              {formatPrice(histories[item.id].lowest_price, currencyDisplayMode)} · Hi:
-                              {formatPrice(histories[item.id].highest_price, currencyDisplayMode)}
-                            </span>
-                            <TrendChart
-                              points={histories[item.id].series}
-                              width={120}
-                              height={28}
-                              currencyDisplayMode={currencyDisplayMode}
-                            />
-                          </div>
-                        ) : (
-                          <span className="muted">-</span>
-                        )}
+                        <span>{item.last_status || "-"}</span>
                       </td>
                       <td>
-                        <span>{item.last_status}</span>
-                        <span className="muted compact-cell-sub">{formatDateTime(item.last_checked_at)}</span>
-                      </td>
-                      <td>{item.active ? "active" : "paused"} · {item.archived_at ? "archived" : "live"}</td>
-                      <td>
-                        <input
-                          className="compact-tag-input"
-                          type="text"
-                          value={rowTagInputs[item.id] ?? item.tags.join(", ")}
-                          onChange={(event) =>
-                            setRowTagInputs((previous) => ({
-                              ...previous,
-                              [item.id]: event.target.value,
-                            }))
-                          }
-                          placeholder="tag1, tag2"
-                          list="tag-suggestions"
-                        />
-                      </td>
-                      <td>
-                        <div className="row-actions">
+                        <div className="row-actions row-actions-compact">
                           <button
                             type="button"
-                            className="secondary"
-                            onClick={() => {
-                              void handleSaveItemTags(item.id);
-                            }}
-                          >
-                            Save tags
-                          </button>
-                          <button
-                            type="button"
-                            className="secondary"
+                            className="secondary compact-button"
                             onClick={() => {
                               void handleArchiveToggle(item);
                             }}

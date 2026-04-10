@@ -100,7 +100,9 @@ describe("App", () => {
     expect(screen.getByText("SnipeBot Watchlist")).toBeTruthy();
     expect(await screen.findByText("Lamp")).toBeTruthy();
     expect(screen.getByText("hema")).toBeTruthy();
-    expect(await screen.findByText(/Lo:/)).toBeTruthy();
+    expect(screen.queryByText("Trend")).toBeNull();
+    expect(screen.queryByText("Flags")).toBeNull();
+    expect(screen.queryByText("Tags")).toBeNull();
   });
 
   it("submits form and refreshes list", async () => {
