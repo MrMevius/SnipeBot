@@ -194,6 +194,60 @@ def list_watch_items_paginated(
 
     if sort == "updated_asc":
         statement = statement.order_by(WatchItem.updated_at.asc(), WatchItem.id.asc())
+    elif sort == "label_asc":
+        statement = statement.order_by(
+            func.lower(func.coalesce(WatchItem.custom_label, "")).asc(),
+            WatchItem.id.asc(),
+        )
+    elif sort == "label_desc":
+        statement = statement.order_by(
+            func.lower(func.coalesce(WatchItem.custom_label, "")).desc(),
+            WatchItem.id.desc(),
+        )
+    elif sort == "site_asc":
+        statement = statement.order_by(
+            func.lower(WatchItem.site_key).asc(),
+            WatchItem.id.asc(),
+        )
+    elif sort == "site_desc":
+        statement = statement.order_by(
+            func.lower(WatchItem.site_key).desc(),
+            WatchItem.id.desc(),
+        )
+    elif sort == "target_asc":
+        statement = statement.order_by(
+            func.coalesce(WatchItem.target_price, 99999999).asc(),
+            WatchItem.updated_at.desc(),
+            WatchItem.id.desc(),
+        )
+    elif sort == "target_desc":
+        statement = statement.order_by(
+            func.coalesce(WatchItem.target_price, -1).desc(),
+            WatchItem.updated_at.desc(),
+            WatchItem.id.desc(),
+        )
+    elif sort == "current_asc":
+        statement = statement.order_by(
+            func.coalesce(WatchItem.current_price, 99999999).asc(),
+            WatchItem.updated_at.desc(),
+            WatchItem.id.desc(),
+        )
+    elif sort == "current_desc":
+        statement = statement.order_by(
+            func.coalesce(WatchItem.current_price, -1).desc(),
+            WatchItem.updated_at.desc(),
+            WatchItem.id.desc(),
+        )
+    elif sort == "status_asc":
+        statement = statement.order_by(
+            func.lower(func.coalesce(WatchItem.last_status, "")).asc(),
+            WatchItem.id.asc(),
+        )
+    elif sort == "status_desc":
+        statement = statement.order_by(
+            func.lower(func.coalesce(WatchItem.last_status, "")).desc(),
+            WatchItem.id.desc(),
+        )
     elif sort == "price_asc":
         statement = statement.order_by(
             func.coalesce(WatchItem.current_price, 99999999).asc(),

@@ -100,12 +100,14 @@ describe("App", () => {
     expect(screen.getByText("SnipeBot Watchlist")).toBeTruthy();
     expect(await screen.findByText("Lamp")).toBeTruthy();
     expect(screen.getByText("hema")).toBeTruthy();
+    expect(screen.queryByPlaceholderText("https://...")).toBeNull();
     expect(screen.queryByText("Trend")).toBeNull();
     expect(screen.queryByText("Flags")).toBeNull();
     expect(screen.queryByText("Tags")).toBeNull();
   });
 
   it("submits form and refreshes list", async () => {
+    window.history.pushState({}, "", "/add-product");
     let watchlistCalls = 0;
 
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -242,10 +244,11 @@ describe("App", () => {
     fireEvent.click(screen.getByText("Add to watchlist"));
 
     expect(await screen.findByText("Saved (created).")).toBeTruthy();
-    expect(await screen.findByText("Headphones")).toBeTruthy();
+    expect(screen.queryByText("Headphones")).toBeNull();
   });
 
   it("auto-fills label from URL preview", async () => {
+    window.history.pushState({}, "", "/add-product");
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
 
@@ -728,7 +731,10 @@ describe("App", () => {
     fireEvent.change(screen.getByLabelText("Log level"), { target: { value: "DEBUG" } });
 
     fireEvent.change(screen.getByLabelText("Price display mode"), { target: { value: "code" } });
-    fireEvent.click(screen.getByLabelText("Dark mode"));
+    const darkModeToggle = screen.getByLabelText("Dark mode") as HTMLInputElement;
+    if (!darkModeToggle.checked) {
+      fireEvent.click(darkModeToggle);
+    }
 
     fireEvent.click(screen.getByText("Save settings"));
 

@@ -428,6 +428,48 @@ def test_watchlist_supports_filters_and_pagination() -> None:
     assert len(paged_payload["items"]) == 1
 
 
+def test_watchlist_supports_column_sort_keys() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    alpha = client.post(
+        "/watchlist",
+        json={"url": "https://www.hema.nl/p/sort-alpha", "custom_label": "Zulu"},
+    )
+    beta = client.post(
+        "/watchlist",
+        json={"url": "https://www.amazon.nl/dp/B0123", "custom_label": "Alpha"},
+    )
+    gamma = client.post(
+        "/watchlist",
+        json={"url": "https://www.hema.nl/p/sort-gamma", "custom_label": "Mike"},
+    )
+
+    assert alpha.status_code == 200
+    assert beta.status_code == 200
+    assert gamma.status_code == 200
+
+    by_label_asc = client.get("/watchlist", params={"sort": "label_asc"})
+    assert by_label_asc.status_code == 200
+    labels_asc = [item["custom_label"] for item in by_label_asc.json()["items"]]
+    assert labels_asc[:3] == ["Alpha", "Mike", "Zulu"]
+
+    by_label_desc = client.get("/watchlist", params={"sort": "label_desc"})
+    assert by_label_desc.status_code == 200
+    labels_desc = [item["custom_label"] for item in by_label_desc.json()["items"]]
+    assert labels_desc[:3] == ["Zulu", "Mike", "Alpha"]
+
+    by_site_asc = client.get("/watchlist", params={"sort": "site_asc"})
+    assert by_site_asc.status_code == 200
+    sites_asc = [item["site_key"] for item in by_site_asc.json()["items"]]
+    assert sites_asc[0] == "amazon_nl"
+
+    by_site_desc = client.get("/watchlist", params={"sort": "site_desc"})
+    assert by_site_desc.status_code == 200
+    sites_desc = [item["site_key"] for item in by_site_desc.json()["items"]]
+    assert sites_desc[0] == "hema"
+
+
 def test_watchlist_bulk_archive_and_restore_flow() -> None:
     _reset_watch_items()
     client = TestClient(app)

@@ -2,10 +2,8 @@ import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import {
   archiveWatchItem,
   bulkUpdateWatchItems,
-  createWatchTag,
   fetchSettings,
   fetchWatchlistHealth,
-  fetchWatchTags,
   fetchWatchItemAlerts,
   fetchWatchItemDetail,
   fetchWatchItemHistory,
@@ -24,7 +22,6 @@ import {
   type WatchItemDetailResponse,
   type WatchItemHistoryResponse,
   type WatchItemPreviewResponse,
-  type WatchTag,
   type WatchlistHealthResponse,
 } from "./api/client";
 
@@ -40,7 +37,7 @@ function loadUiSettings(): {
   try {
     const raw = window.localStorage.getItem(UI_SETTINGS_STORAGE_KEY);
     if (!raw) {
-      return { defaultHistoryDays: 30, currencyDisplayMode: "symbol", darkMode: false };
+      return { defaultHistoryDays: 30, currencyDisplayMode: "symbol", darkMode: true };
     }
 
     const parsed = JSON.parse(raw) as {
@@ -62,7 +59,7 @@ function loadUiSettings(): {
       darkMode: Boolean(parsed.darkMode),
     };
   } catch {
-    return { defaultHistoryDays: 30, currencyDisplayMode: "symbol", darkMode: false };
+    return { defaultHistoryDays: 30, currencyDisplayMode: "symbol", darkMode: true };
   }
 }
 
@@ -418,7 +415,10 @@ function TrendChart({
   );
 }
 
-type Route = { kind: "overview" } | { kind: "detail"; itemId: number };
+type Route =
+  | { kind: "overview" }
+  | { kind: "add-product" }
+  | { kind: "detail"; itemId: number };
 
 type SettingsFormState = {
   notificationsEnabled: boolean;
@@ -429,12 +429,48 @@ type SettingsFormState = {
   logLevel: "DEBUG" | "INFO" | "WARNING" | "ERROR";
 };
 
-type SortOption = "updated_desc" | "updated_asc" | "price_asc" | "price_desc";
+type SortOption =
+  | "updated_desc"
+  | "updated_asc"
+  | "price_asc"
+  | "price_desc"
+  | "label_asc"
+  | "label_desc"
+  | "site_asc"
+  | "site_desc"
+  | "target_asc"
+  | "target_desc"
+  | "current_asc"
+  | "current_desc"
+  | "status_asc"
+  | "status_desc";
 type TernaryFilter = "any" | "yes" | "no";
 type BulkAction = BulkWatchItemPayload["action"];
 type MenuView = "watchlist" | "stats" | "settings";
+type SortableColumn = "product" | "site" | "target" | "current" | "status";
+
+const SORT_BY_COLUMN: Record<SortableColumn, { asc: SortOption; desc: SortOption }> = {
+  product: { asc: "label_asc", desc: "label_desc" },
+  site: { asc: "site_asc", desc: "site_desc" },
+  target: { asc: "target_asc", desc: "target_desc" },
+  current: { asc: "current_asc", desc: "current_desc" },
+  status: { asc: "status_asc", desc: "status_desc" },
+};
+
+function getSortDirection(sort: SortOption, column: SortableColumn): "asc" | "desc" | null {
+  if (sort === SORT_BY_COLUMN[column].asc) {
+    return "asc";
+  }
+  if (sort === SORT_BY_COLUMN[column].desc) {
+    return "desc";
+  }
+  return null;
+}
 
 function parseRoute(pathname: string): Route {
+  if (/^\/add-product\/?$/.test(pathname)) {
+    return { kind: "add-product" };
+  }
   const match = pathname.match(/^\/products\/(\d+)$/);
   if (match) {
     return { kind: "detail", itemId: Number(match[1]) };
@@ -759,22 +795,15 @@ export function App() {
   );
   const [darkMode, setDarkMode] = useState<boolean>(() => loadUiSettings().darkMode);
   const [activeFilter, setActiveFilter] = useState<TernaryFilter>("any");
-  const [hasTargetFilter, setHasTargetFilter] = useState<TernaryFilter>("any");
-  const [siteKeyFilter, setSiteKeyFilter] = useState("");
-  const [tagFilter, setTagFilter] = useState("");
   const [searchFilter, setSearchFilter] = useState("");
   const [sort, setSort] = useState<SortOption>("updated_desc");
-  const [includeArchived, setIncludeArchived] = useState(false);
-  const [archivedOnly, setArchivedOnly] = useState(false);
-  const [limit, setLimit] = useState(25);
+  const limit = 25;
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
   const [bulkAction, setBulkAction] = useState<BulkAction>("pause");
   const [bulkTargetPrice, setBulkTargetPrice] = useState("");
   const [bulkWorking, setBulkWorking] = useState(false);
-  const [availableTags, setAvailableTags] = useState<WatchTag[]>([]);
-  const [newTagName, setNewTagName] = useState("");
   const [health, setHealth] = useState<WatchlistHealthResponse | null>(null);
   const labelRef = useRef(customLabel);
   const labelDirtyRef = useRef(labelDirty);
@@ -834,41 +863,19 @@ export function App() {
     loadBackendSettings().catch((err: Error) => setSettingsError(err.message));
   }, []);
 
-  useEffect(() => {
-    const loadTags = async () => {
-      try {
-        const payload = await fetchWatchTags();
-        setAvailableTags(payload.tags);
-      } catch {
-        // keep tag controls usable without suggestions
-      }
-    };
-    loadTags().catch(() => undefined);
-  }, []);
-
   async function loadWatchlist() {
     const [response, healthPayload] = await Promise.all([
       fetchWatchlist({
-      active:
-        activeFilter === "any"
-          ? undefined
-          : activeFilter === "yes"
-            ? true
-            : false,
-      has_target:
-        hasTargetFilter === "any"
-          ? undefined
-          : hasTargetFilter === "yes"
-            ? true
-            : false,
-      site_key: siteKeyFilter.trim() || undefined,
-      tag: tagFilter.trim() || undefined,
-      q: searchFilter.trim() || undefined,
-      sort,
-      limit,
-      offset,
-      include_archived: includeArchived,
-      archived_only: archivedOnly,
+        active:
+          activeFilter === "any"
+            ? undefined
+            : activeFilter === "yes"
+              ? true
+              : false,
+        q: searchFilter.trim() || undefined,
+        sort,
+        limit,
+        offset,
       }),
       fetchWatchlistHealth(),
     ]);
@@ -882,15 +889,9 @@ export function App() {
   }, [
     ownerId,
     activeFilter,
-    hasTargetFilter,
-    siteKeyFilter,
-    tagFilter,
     searchFilter,
     sort,
-    limit,
     offset,
-    includeArchived,
-    archivedOnly,
   ]);
 
   useEffect(() => {
@@ -901,7 +902,7 @@ export function App() {
 
   useEffect(() => {
     setOffset(0);
-  }, [ownerId, activeFilter, hasTargetFilter, siteKeyFilter, tagFilter, searchFilter, sort, limit, includeArchived, archivedOnly]);
+  }, [ownerId, activeFilter, searchFilter, sort]);
 
   useEffect(() => {
     const candidateUrl = url.trim();
@@ -1116,28 +1117,28 @@ export function App() {
     }
   }
 
-  async function handleCreateTag() {
-    const candidate = newTagName.trim();
-    if (!candidate) {
-      setError("Tag name is required.");
-      return;
-    }
+  function handleSortByColumn(column: SortableColumn) {
+    setSort((previous) => {
+      const mapping = SORT_BY_COLUMN[column];
+      if (previous === mapping.asc) {
+        return mapping.desc;
+      }
+      if (previous === mapping.desc) {
+        return mapping.asc;
+      }
+      return mapping.asc;
+    });
+  }
 
-    setError(null);
-    setFeedback(null);
-    try {
-      const created = await createWatchTag(candidate);
-      setAvailableTags((previous) => {
-        if (previous.some((tag) => tag.id === created.id || tag.name.toLowerCase() === created.name.toLowerCase())) {
-          return previous;
-        }
-        return [...previous, created].sort((a, b) => a.name.localeCompare(b.name));
-      });
-      setNewTagName("");
-      setFeedback(`Tag \"${created.name}\" saved.`);
-    } catch (err) {
-      setError((err as Error).message);
+  function sortLabel(column: SortableColumn): string {
+    const direction = getSortDirection(sort, column);
+    if (direction === "asc") {
+      return "↑";
     }
+    if (direction === "desc") {
+      return "↓";
+    }
+    return "↕";
   }
 
   const allOnPageSelected =
@@ -1156,12 +1157,97 @@ export function App() {
     );
   }
 
+  if (route.kind === "add-product") {
+    return (
+      <main className="container">
+        <header className="topbar panel">
+          <h1>Add product</h1>
+          <div className="topbar-actions">
+            <a
+              className="button-link"
+              href="/"
+              onClick={(event) => {
+                event.preventDefault();
+                navigate("/");
+              }}
+            >
+              Back to watchlist
+            </a>
+          </div>
+        </header>
+
+        <section id="add-product" className="panel compact-form">
+          <h2>Add Product</h2>
+          <form onSubmit={handleSubmit}>
+            <div className="compact-grid">
+              <label>
+                URL
+                <input
+                  type="url"
+                  placeholder="https://..."
+                  value={url}
+                  onChange={(event) => setUrl(event.target.value)}
+                />
+              </label>
+              <label>
+                Label (optional)
+                <input
+                  type="text"
+                  placeholder="Desk lamp"
+                  value={customLabel}
+                  onChange={(event) => {
+                    setLabelDirty(true);
+                    setCustomLabel(event.target.value);
+                  }}
+                />
+              </label>
+              <label>
+                Target (optional)
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="39.99"
+                  value={targetPrice}
+                  onChange={(event) => setTargetPrice(event.target.value)}
+                />
+              </label>
+              <button type="submit">Add to watchlist</button>
+            </div>
+          </form>
+          {previewLoading && <p className="muted">Fetching product details…</p>}
+          {preview && (
+            <div className="preview-card">
+              <strong>{preview.title}</strong>
+              <div className="muted">
+                Site: {preview.site_key} · Price: {formatPrice(preview.current_price, currencyDisplayMode)} ·
+                Availability: {preview.availability}
+              </div>
+            </div>
+          )}
+          {previewError && <p className="error">{previewError}</p>}
+          {error && <p className="error">{error}</p>}
+          {feedback && <p className="success">{feedback}</p>}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="container">
       <header className="topbar panel">
         <h1>SnipeBot Watchlist</h1>
         <div className="topbar-actions">
-          <a className="button-link" href="#add-product">Add product</a>
+          <a
+            className="button-link"
+            href="/add-product"
+            onClick={(event) => {
+              event.preventDefault();
+              navigate("/add-product");
+            }}
+          >
+            Add product
+          </a>
           <button
             type="button"
             className="secondary"
@@ -1402,60 +1488,6 @@ export function App() {
 
       {menuView === "watchlist" ? (
         <>
-          <section id="add-product" className="panel compact-form">
-            <h2>Add Product</h2>
-            <form onSubmit={handleSubmit}>
-              <div className="compact-grid">
-                <label>
-                  URL
-                  <input
-                    type="url"
-                    placeholder="https://..."
-                    value={url}
-                    onChange={(event) => setUrl(event.target.value)}
-                  />
-                </label>
-                <label>
-                  Label (optional)
-                  <input
-                    type="text"
-                    placeholder="Desk lamp"
-                    value={customLabel}
-                    onChange={(event) => {
-                      setLabelDirty(true);
-                      setCustomLabel(event.target.value);
-                    }}
-                  />
-                </label>
-                <label>
-                  Target (optional)
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="39.99"
-                    value={targetPrice}
-                    onChange={(event) => setTargetPrice(event.target.value)}
-                  />
-                </label>
-                <button type="submit">Add to watchlist</button>
-              </div>
-            </form>
-            {previewLoading && <p className="muted">Fetching product details…</p>}
-            {preview && (
-              <div className="preview-card">
-                <strong>{preview.title}</strong>
-                <div className="muted">
-                  Site: {preview.site_key} · Price: {formatPrice(preview.current_price, currencyDisplayMode)} ·
-                  Availability: {preview.availability}
-                </div>
-              </div>
-            )}
-            {previewError && <p className="error">{previewError}</p>}
-            {error && <p className="error">{error}</p>}
-            {feedback && <p className="success">{feedback}</p>}
-          </section>
-
           <section className="panel">
             <h2>Watchlist Overview</h2>
             <div className="filter-grid">
@@ -1479,98 +1511,14 @@ export function App() {
                   <option value="no">Inactive</option>
                 </select>
               </label>
-              <label className="inline-field">
-                <span>Target</span>
-                <select
-                  value={hasTargetFilter}
-                  onChange={(event) => setHasTargetFilter(event.target.value as TernaryFilter)}
-                >
-                  <option value="any">Any</option>
-                  <option value="yes">Yes</option>
-                  <option value="no">No</option>
-                </select>
-              </label>
-              <label className="inline-field">
-                <span>Site</span>
-                <input
-                  type="text"
-                  placeholder="hema"
-                  value={siteKeyFilter}
-                  onChange={(event) => setSiteKeyFilter(event.target.value)}
-                />
-              </label>
-              <label className="inline-field">
-                <span>Tag</span>
-                <input
-                  type="text"
-                  placeholder="deal"
-                  value={tagFilter}
-                  onChange={(event) => setTagFilter(event.target.value)}
-                  list="tag-suggestions"
-                />
-              </label>
-              <label className="inline-field">
-                <span>Sort</span>
-                <select value={sort} onChange={(event) => setSort(event.target.value as SortOption)}>
-                  <option value="updated_desc">Updated ↓</option>
-                  <option value="updated_asc">Updated ↑</option>
-                  <option value="price_asc">Price ↑</option>
-                  <option value="price_desc">Price ↓</option>
-                </select>
-              </label>
-              <label className="inline-field">
-                <span>Rows</span>
-                <select value={String(limit)} onChange={(event) => setLimit(Number(event.target.value))}>
-                  <option value="10">10</option>
-                  <option value="25">25</option>
-                  <option value="50">50</option>
-                </select>
-              </label>
             </div>
-            <datalist id="tag-suggestions">
-              {availableTags.map((tag) => (
-                <option key={tag.id} value={tag.name} />
-              ))}
-            </datalist>
 
             <div className="actions-row compact-actions-row">
-              <label className="toggle-row">
-                <input
-                  type="checkbox"
-                  checked={includeArchived}
-                  onChange={(event) => {
-                    const checked = event.target.checked;
-                    setIncludeArchived(checked);
-                    if (!checked) {
-                      setArchivedOnly(false);
-                    }
-                  }}
-                />
-                Include archived
-              </label>
-              <label className="toggle-row">
-                <input
-                  type="checkbox"
-                  checked={archivedOnly}
-                  disabled={!includeArchived}
-                  onChange={(event) => setArchivedOnly(event.target.checked)}
-                />
-                Archived only
-              </label>
-              <label className="inline-field small-inline-field">
-                <span>New tag</span>
-                <input
-                  type="text"
-                  value={newTagName}
-                  onChange={(event) => setNewTagName(event.target.value)}
-                  placeholder="electronics"
-                />
-              </label>
-              <button type="button" className="secondary" onClick={() => void handleCreateTag()}>
-                Save tag
-              </button>
               <span className="muted compact-count">Showing {items.length} of {total}</span>
             </div>
+
+            {error && <p className="error">{error}</p>}
+            {feedback && <p className="success">{feedback}</p>}
 
             <div className="actions-row compact-actions-row">
               <label className="inline-field small-inline-field">
@@ -1624,11 +1572,31 @@ export function App() {
                         aria-label="Select all on page"
                       />
                     </th>
-                    <th>Product</th>
-                    <th>Site</th>
-                    <th>Target</th>
-                    <th>Current</th>
-                    <th>Status</th>
+                    <th className="product-col">
+                      <button type="button" className="sort-button" onClick={() => handleSortByColumn("product")}>
+                        Product <span className="sort-indicator">{sortLabel("product")}</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" className="sort-button" onClick={() => handleSortByColumn("site")}>
+                        Site <span className="sort-indicator">{sortLabel("site")}</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" className="sort-button" onClick={() => handleSortByColumn("target")}>
+                        Target <span className="sort-indicator">{sortLabel("target")}</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" className="sort-button" onClick={() => handleSortByColumn("current")}>
+                        Current <span className="sort-indicator">{sortLabel("current")}</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" className="sort-button" onClick={() => handleSortByColumn("status")}>
+                        Status <span className="sort-indicator">{sortLabel("status")}</span>
+                      </button>
+                    </th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -1643,7 +1611,7 @@ export function App() {
                           aria-label={`Select item ${item.id}`}
                         />
                       </td>
-                      <td>
+                      <td className="product-col">
                         <a
                           href={`/products/${item.id}`}
                           className="product-link"
