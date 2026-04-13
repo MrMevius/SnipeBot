@@ -109,6 +109,14 @@ describe("App", () => {
     expect(screen.queryByText("Trend")).toBeNull();
     expect(screen.queryByText("Flags")).toBeNull();
     expect(screen.queryByText("Tags")).toBeNull();
+
+    fireEvent.click(screen.getByRole("link", { name: "Supported shops" }));
+    expect(screen.getByRole("link", { name: "Supported shops" }).getAttribute("aria-current")).toBe("page");
+    expect(await screen.findByTestId("supported-shops-panel")).toBeTruthy();
+    expect(screen.getByTestId("shop-card-hema")).toBeTruthy();
+    expect(screen.getByTestId("shop-card-amazon_nl")).toBeTruthy();
+    expect(screen.getByTestId("shop-card-aliexpress")).toBeTruthy();
+    expect(screen.getByText("Open het product op hema.nl en kopieer de volledige product-URL.")).toBeTruthy();
   });
 
   it("shows status context, relative check time and density toggle", async () => {

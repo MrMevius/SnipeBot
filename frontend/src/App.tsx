@@ -681,7 +681,7 @@ type SortOption =
   | "status_desc";
 type TernaryFilter = "any" | "yes" | "no";
 type BulkAction = BulkWatchItemPayload["action"];
-type MenuView = "watchlist" | "stats" | "settings";
+type MenuView = "watchlist" | "supported-shops" | "stats" | "settings";
 type SortableColumn = "product" | "site" | "target" | "current" | "status";
 type RowDensity = "compact" | "comfortable";
 type GlobalMenuKey = MenuView | "add-product";
@@ -693,6 +693,46 @@ type GlobalMenuItem = {
   active: boolean;
   onClick: (event: MouseEvent<HTMLAnchorElement>) => void;
 };
+
+type SupportedWebshop = {
+  siteKey: string;
+  label: string;
+  domain: string;
+  instructions: string[];
+};
+
+const SUPPORTED_WEBSHOPS: SupportedWebshop[] = [
+  {
+    siteKey: "hema",
+    label: "HEMA",
+    domain: "hema.nl",
+    instructions: [
+      "Open het product op hema.nl en kopieer de volledige product-URL.",
+      "Ga in SnipeBot naar Add product en plak de URL.",
+      "Sla het item op en zet optioneel een targetprijs voor alerts.",
+    ],
+  },
+  {
+    siteKey: "amazon_nl",
+    label: "Amazon NL",
+    domain: "amazon.nl",
+    instructions: [
+      "Open het product op amazon.nl en kopieer de product-URL.",
+      "Voeg de URL toe via Add product in SnipeBot.",
+      "Controleer de preview en sla daarna op in je watchlist.",
+    ],
+  },
+  {
+    siteKey: "aliexpress",
+    label: "AliExpress",
+    domain: "aliexpress.com",
+    instructions: [
+      "Open de productpagina op aliexpress.com en kopieer de URL.",
+      "Plak de URL in Add product en voeg een label toe als dat helpt.",
+      "Klik Add to watchlist en stel desgewenst direct een target in.",
+    ],
+  },
+];
 
 const SORT_BY_COLUMN: Record<SortableColumn, { asc: SortOption; desc: SortOption }> = {
   product: { asc: "label_asc", desc: "label_desc" },
@@ -961,6 +1001,16 @@ function ProductDetailPage({
       onClick: (event) => {
         event.preventDefault();
         onNavigate("/add-product");
+      },
+    },
+    {
+      key: "supported-shops",
+      label: "Supported shops",
+      href: "/",
+      active: menuView === "supported-shops",
+      onClick: (event) => {
+        event.preventDefault();
+        onSelectMenuView("supported-shops");
       },
     },
     {
@@ -1250,6 +1300,16 @@ export function App() {
       onClick: (event) => {
         event.preventDefault();
         navigate("/add-product");
+      },
+    },
+    {
+      key: "supported-shops",
+      label: "Supported shops",
+      href: "/",
+      active: route.kind === "overview" && menuView === "supported-shops",
+      onClick: (event) => {
+        event.preventDefault();
+        selectOverviewView("supported-shops");
       },
     },
     {
@@ -1895,6 +1955,32 @@ export function App() {
           )}
           {settingsError && <p className="error">{settingsError}</p>}
           {settingsFeedback && <p className="success">{settingsFeedback}</p>}
+        </section>
+      ) : null}
+
+      {menuView === "supported-shops" ? (
+        <section className="panel" data-testid="supported-shops-panel">
+          <h2>Supported shops</h2>
+          <p className="muted">
+            Deze webshops worden momenteel ondersteund. Gebruik per shop de korte stappen hieronder.
+          </p>
+
+          <div className="supported-shops-grid">
+            {SUPPORTED_WEBSHOPS.map((shop) => (
+              <article key={shop.siteKey} className="supported-shop-card" data-testid={`shop-card-${shop.siteKey}`}>
+                <header className="supported-shop-head">
+                  <strong>{shop.label}</strong>
+                  <span className="supported-shop-key">{shop.siteKey}</span>
+                </header>
+                <div className="muted">Domain: {shop.domain}</div>
+                <ol>
+                  {shop.instructions.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ol>
+              </article>
+            ))}
+          </div>
         </section>
       ) : null}
 
