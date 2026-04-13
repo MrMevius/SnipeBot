@@ -436,6 +436,13 @@ td {
   background: linear-gradient(145deg, #1f6feb, #3b82f6);
 }
 
+.product-thumb-large {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  border-radius: 10px;
+}
+
 .product-thumb img {
   position: absolute;
   inset: 0;
@@ -580,6 +587,17 @@ td {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 8px;
+}
+
+.detail-product-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.detail-product-head h2 {
+  margin: 0;
 }
 
 .days-toggle {

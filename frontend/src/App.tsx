@@ -208,6 +208,37 @@ function getThumbnailFallbackText(item: WatchItem): string {
   return first ? first.toUpperCase() : "?";
 }
 
+function ProductThumbnail({
+  item,
+  testId,
+  size = "small",
+}: {
+  item: WatchItem;
+  testId?: string;
+  size?: "small" | "large";
+}) {
+  const thumbnailUrl = getProductThumbnailUrl(item.url);
+  return (
+    <div
+      className={`product-thumb ${size === "large" ? "product-thumb-large" : ""}`.trim()}
+      data-testid={testId}
+      aria-hidden="true"
+    >
+      <span className="product-thumb-fallback">{getThumbnailFallbackText(item)}</span>
+      {thumbnailUrl ? (
+        <img
+          src={thumbnailUrl}
+          alt=""
+          loading="lazy"
+          onError={(event) => {
+            event.currentTarget.style.display = "none";
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function getNiceStep(maxValue: number, intervals: number): number {
   if (maxValue <= 0) {
     return 1;
@@ -948,7 +979,10 @@ function ProductDetailPage({
           </section>
 
           <section className="panel">
-            <h2>Snapshot</h2>
+            <div className="detail-product-head">
+              <ProductThumbnail item={detail.item} size="large" testId={`detail-thumbnail-${detail.item.id}`} />
+              <h2>Snapshot</h2>
+            </div>
             <div className="snapshot-grid">
               <div>
                 <div className="muted">Current price</div>
@@ -1938,19 +1972,7 @@ export function App() {
                       </td>
                       <td className="product-col">
                         <div className="product-cell">
-                          <div className="product-thumb" data-testid={`thumbnail-${item.id}`} aria-hidden="true">
-                            <span className="product-thumb-fallback">{getThumbnailFallbackText(item)}</span>
-                            {getProductThumbnailUrl(item.url) ? (
-                              <img
-                                src={getProductThumbnailUrl(item.url) ?? undefined}
-                                alt=""
-                                loading="lazy"
-                                onError={(event) => {
-                                  event.currentTarget.style.display = "none";
-                                }}
-                              />
-                            ) : null}
-                          </div>
+                          <ProductThumbnail item={item} testId={`thumbnail-${item.id}`} />
                           <a
                             href={`/products/${item.id}`}
                             className="product-link"

@@ -598,6 +598,7 @@ describe("App", () => {
     fireEvent.click(await screen.findByText("Lamp"));
 
     expect(await screen.findByText(/Product Detail/)).toBeTruthy();
+    expect(screen.getByTestId("detail-thumbnail-1")).toBeTruthy();
     expect(await screen.findByText("7 day low")).toBeTruthy();
 
     const chart = screen.getByLabelText("Price trend chart");
@@ -737,6 +738,7 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText(/Product Detail/)).toBeTruthy();
+    expect(screen.getByTestId("detail-thumbnail-1")).toBeTruthy();
     expect(screen.queryByTestId("detail-chart-target-line")).toBeNull();
     expect(screen.getByTestId("detail-current-price").textContent).toBe("€ 18.00");
     expect(screen.getByTestId("detail-chart-point-2")).toBeTruthy();
