@@ -99,11 +99,113 @@ describe("App", () => {
     render(<App />);
     expect(screen.getByText("SnipeBot Watchlist")).toBeTruthy();
     expect(await screen.findByText("Lamp")).toBeTruthy();
+    expect(screen.getByTestId("thumbnail-1")).toBeTruthy();
     expect(screen.getByText("hema")).toBeTruthy();
+    expect(screen.getByText("Wacht op check")).toBeTruthy();
+    expect(screen.getByText("Nog niet gecheckt")).toBeTruthy();
     expect(screen.queryByPlaceholderText("https://...")).toBeNull();
     expect(screen.queryByText("Trend")).toBeNull();
     expect(screen.queryByText("Flags")).toBeNull();
     expect(screen.queryByText("Tags")).toBeNull();
+  });
+
+  it("shows status context, relative check time and density toggle", async () => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(new Date("2026-04-06T10:10:00Z").getTime());
+
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith("/settings")) {
+        return {
+          ok: true,
+          json: async () => ({
+            notifications_enabled: false,
+            telegram_enabled: false,
+            check_interval_seconds: 1800,
+            playwright_fallback_enabled: false,
+            playwright_fallback_adapters: [],
+            log_level: "INFO",
+          }),
+        };
+      }
+
+      if (url.includes("/watchlist/1/history")) {
+        return {
+          ok: true,
+          json: async () => ({
+            item_id: 1,
+            site_key: "hema",
+            checks_count: 1,
+            latest_price: 19,
+            lowest_price: 19,
+            highest_price: 19,
+            series: [{ checked_at: "2026-04-06T10:00:00Z", price: 19 }],
+          }),
+        };
+      }
+
+      if (/\/watchlist(\?|$)/.test(url)) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [
+              {
+                id: 1,
+                url: "https://hema.nl/product/1",
+                custom_label: "Desk lamp",
+                notes: null,
+                target_price: 20,
+                site_key: "hema",
+                active: true,
+                current_price: 19,
+                last_checked_at: "2026-04-06T10:00:00Z",
+                last_status: "ok",
+                archived_at: null,
+                tags: [],
+              },
+            ],
+            total: 1,
+            limit: 25,
+            offset: 0,
+          }),
+        };
+      }
+
+      if (url.endsWith("/watchlist/health")) {
+        return {
+          ok: true,
+          json: async () => ({
+            owner_id: "local",
+            total: 1,
+            active: 1,
+            archived: 0,
+            stale: 0,
+            error: 0,
+            dead_lettered: 0,
+          }),
+        };
+      }
+      if (url.endsWith("/watchlist/tags")) {
+        return { ok: true, json: async () => ({ tags: [] }) };
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Desk lamp")).toBeTruthy();
+    expect(screen.getByText("In orde")).toBeTruthy();
+    expect(screen.getByText("10 min geleden")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("status-badge-1"));
+    expect(await screen.findByText("Laatste prijscheck was succesvol.")).toBeTruthy();
+
+    const table = screen.getByRole("table");
+    expect(table.className).toContain("density-compact");
+    fireEvent.click(screen.getByText("Comfortable"));
+    expect(table.className).toContain("density-comfortable");
+
+    nowSpy.mockRestore();
   });
 
   it("submits form and refreshes list", async () => {
@@ -387,7 +489,7 @@ describe("App", () => {
               target_price: 25,
               site_key: "hema",
               active: true,
-              current_price: 24,
+              current_price: null,
               last_checked_at: "2026-04-05T10:00:00Z",
               last_status: "ok",
               tags: [],
@@ -497,6 +599,8 @@ describe("App", () => {
 
     const chart = screen.getByLabelText("Price trend chart");
     expect(chart).toBeTruthy();
+    expect(screen.getByTestId("detail-chart-target-line")).toBeTruthy();
+    expect(screen.getByTestId("detail-current-price").textContent).toBe("€ 24.00");
 
     fireEvent.mouseEnter(screen.getByTestId("detail-chart-point-0"));
     const tooltip = screen.getByTestId("detail-chart-tooltip");
@@ -521,6 +625,118 @@ describe("App", () => {
     fireEvent.click(screen.getByText("Check now"));
     expect(await screen.findByText("Check queued for next worker tick.")).toBeTruthy();
     expect(await screen.findByText("target_reached")).toBeTruthy();
+  });
+
+  it("does not render target line when target is missing", async () => {
+    window.history.pushState({}, "", "/products/1");
+
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith("/settings")) {
+        return {
+          ok: true,
+          json: async () => ({
+            notifications_enabled: false,
+            telegram_enabled: false,
+            check_interval_seconds: 1800,
+            playwright_fallback_enabled: false,
+            playwright_fallback_adapters: [],
+            log_level: "INFO",
+          }),
+        };
+      }
+
+      if (url.includes("/watchlist/1/history")) {
+        return {
+          ok: true,
+          json: async () => ({
+            item_id: 1,
+            site_key: "hema",
+            checks_count: 2,
+            latest_price: 18,
+            lowest_price: 18,
+            highest_price: 20,
+            series: [
+              { checked_at: "2026-04-04T10:00:00Z", price: 20 },
+              { checked_at: "2026-04-05T10:00:00Z", price: 18 },
+            ],
+          }),
+        };
+      }
+
+      if (url.endsWith("/watchlist/1/alerts?limit=20")) {
+        return {
+          ok: true,
+          json: async () => ({ item_id: 1, events: [] }),
+        };
+      }
+
+      if (url.endsWith("/watchlist/1") && !init?.method) {
+        return {
+          ok: true,
+          json: async () => ({
+            item: {
+              id: 1,
+              url: "https://hema.nl/product/1",
+              custom_label: "Lamp",
+              notes: null,
+              target_price: null,
+              site_key: "hema",
+              active: true,
+              current_price: 18,
+              last_checked_at: "2026-04-13T13:20:00Z",
+              last_status: "ok",
+              tags: [],
+            },
+            lows: {
+              low_7d: 18,
+              low_30d: 18,
+              all_time_low: 17,
+            },
+          }),
+        };
+      }
+
+      if (/\/watchlist(\?|$)/.test(url)) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [],
+            total: 0,
+            limit: 25,
+            offset: 0,
+          }),
+        };
+      }
+
+      if (url.endsWith("/watchlist/health")) {
+        return {
+          ok: true,
+          json: async () => ({
+            owner_id: "local",
+            total: 0,
+            active: 0,
+            archived: 0,
+            stale: 0,
+            error: 0,
+            dead_lettered: 0,
+          }),
+        };
+      }
+      if (url.endsWith("/watchlist/tags")) {
+        return { ok: true, json: async () => ({ tags: [] }) };
+      }
+
+      throw new Error(`Unexpected URL ${url}`);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText(/Product Detail/)).toBeTruthy();
+    expect(screen.queryByTestId("detail-chart-target-line")).toBeNull();
+    expect(screen.getByTestId("detail-current-price").textContent).toBe("€ 18.00");
+    expect(screen.getByTestId("detail-chart-point-2")).toBeTruthy();
   });
 
   it("applies bulk archive action from overview", async () => {

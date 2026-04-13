@@ -326,6 +326,60 @@ td {
   vertical-align: middle;
 }
 
+.compact-table.density-comfortable th,
+.compact-table.density-comfortable td {
+  padding: 10px 8px;
+  font-size: 13px;
+}
+
+.density-toggle {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.density-toggle .pill {
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.product-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.product-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  flex: 0 0 28px;
+  border: 1px solid var(--panel-border);
+  background: linear-gradient(145deg, #1f6feb, #3b82f6);
+}
+
+.product-thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 2;
+}
+
+.product-thumb-fallback {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  z-index: 1;
+}
+
 .product-link {
   font-weight: 600;
   text-decoration: none;
@@ -380,6 +434,68 @@ td {
 .compact-cell-sub {
   display: block;
   margin-top: 2px;
+}
+
+.status-cell {
+  display: grid;
+  gap: 2px;
+}
+
+.status-badge {
+  justify-self: start;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.status-ok {
+  background: rgba(6, 118, 71, 0.22);
+  color: #75e0a7;
+  border-color: rgba(117, 224, 167, 0.35);
+}
+
+.status-pending {
+  background: rgba(58, 110, 165, 0.25);
+  color: #8fc1ff;
+  border-color: rgba(143, 193, 255, 0.38);
+}
+
+.status-warning {
+  background: rgba(181, 121, 0, 0.23);
+  color: #f7d27c;
+  border-color: rgba(247, 210, 124, 0.35);
+}
+
+.status-error {
+  background: rgba(180, 35, 24, 0.24);
+  color: #fda29b;
+  border-color: rgba(253, 162, 155, 0.35);
+}
+
+.status-neutral {
+  background: rgba(71, 84, 103, 0.28);
+  color: #d0d5dd;
+  border-color: rgba(208, 213, 221, 0.28);
+}
+
+.status-context {
+  display: grid;
+  gap: 2px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  max-width: 260px;
+}
+
+.status-context span {
+  color: var(--muted);
 }
 
 .snapshot-grid {
@@ -468,6 +584,18 @@ td {
   animation: chart-fade-in 220ms ease-out;
 }
 
+.chart-target-line {
+  stroke: #f59e0b;
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+}
+
+.chart-target-label {
+  fill: #b45309;
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .chart-point {
   fill: #1f6feb;
   opacity: 0.65;
@@ -535,6 +663,10 @@ td {
 
   .product-link {
     max-width: 280px;
+  }
+
+  .status-context {
+    max-width: 200px;
   }
 
   .compact-grid {

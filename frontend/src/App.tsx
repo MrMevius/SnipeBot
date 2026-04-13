@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   archiveWatchItem,
   bulkUpdateWatchItems,
@@ -109,6 +109,105 @@ function formatDateTime(value: Date | string | null | undefined): string {
   return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
 }
 
+type StatusMeta = {
+  label: string;
+  description: string;
+  tone: "ok" | "pending" | "warning" | "error" | "neutral";
+};
+
+const STATUS_META_BY_KEY: Record<string, StatusMeta> = {
+  ok: {
+    label: "In orde",
+    description: "Laatste prijscheck was succesvol.",
+    tone: "ok",
+  },
+  pending: {
+    label: "Wacht op check",
+    description: "Item staat in de wachtrij voor een eerste of volgende controle.",
+    tone: "pending",
+  },
+  fetch_error: {
+    label: "Ophalen mislukt",
+    description: "De pagina kon niet worden opgehaald. Er volgt automatisch een retry.",
+    tone: "error",
+  },
+  parse_error: {
+    label: "Lezen mislukt",
+    description: "De productinformatie kon niet betrouwbaar worden uitgelezen.",
+    tone: "warning",
+  },
+  unsupported: {
+    label: "Site niet ondersteund",
+    description: "Voor deze site is nog geen parser beschikbaar.",
+    tone: "warning",
+  },
+};
+
+function getStatusMeta(status: string | null | undefined): StatusMeta {
+  const normalized = (status || "").trim().toLowerCase();
+  if (!normalized) {
+    return {
+      label: "Onbekend",
+      description: "Er is nog geen status beschikbaar.",
+      tone: "neutral",
+    };
+  }
+  return (
+    STATUS_META_BY_KEY[normalized] ?? {
+      label: normalized.replace(/_/g, " "),
+      description: "Technische statuscode van de laatste prijscheck.",
+      tone: "neutral",
+    }
+  );
+}
+
+function formatRelativeTime(value: string | null | undefined): string {
+  if (!value) {
+    return "Nog niet gecheckt";
+  }
+
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) {
+    return "Onbekende checktijd";
+  }
+
+  const diffSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (diffSeconds < 30) {
+    return "Zojuist gecheckt";
+  }
+  if (diffSeconds < 60) {
+    return `${diffSeconds} sec geleden`;
+  }
+
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if (diffMinutes < 60) {
+    return `${diffMinutes} min geleden`;
+  }
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours} uur geleden`;
+  }
+
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays} d geleden`;
+}
+
+function getProductThumbnailUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(parsed.hostname)}&sz=64`;
+  } catch {
+    return null;
+  }
+}
+
+function getThumbnailFallbackText(item: WatchItem): string {
+  const name = deriveProductName(item.custom_label, item.url);
+  const first = name.trim().charAt(0);
+  return first ? first.toUpperCase() : "?";
+}
+
 function getNiceStep(maxValue: number, intervals: number): number {
   if (maxValue <= 0) {
     return 1;
@@ -144,6 +243,7 @@ function TrendChart({
   className,
   interactive = false,
   daysWindow,
+  targetPrice,
   currencyDisplayMode = "symbol",
 }: {
   points: Array<{ checked_at: string; price: number }>;
@@ -152,9 +252,14 @@ function TrendChart({
   className?: string;
   interactive?: boolean;
   daysWindow?: number;
+  targetPrice?: number | null;
   currencyDisplayMode?: CurrencyDisplayMode;
 }) {
-  if (points.length < 2) {
+  if (points.length === 0) {
+    return <div className="mini-chart-empty">Not enough data</div>;
+  }
+
+  if (!interactive && points.length < 2) {
     return <div className="mini-chart-empty">Not enough data</div>;
   }
 
@@ -248,6 +353,18 @@ function TrendChart({
         };
       })
     : [];
+
+  const hasTargetLine =
+    interactive &&
+    targetPrice !== null &&
+    targetPrice !== undefined &&
+    Number.isFinite(targetPrice) &&
+    targetPrice >= 0;
+  const targetLineY = hasTargetLine
+    ? height -
+      padding.bottom -
+      Math.min(Math.max((targetPrice as number) / range, 0), 1) * chartHeight
+    : null;
 
   function handleKeyDown(event: KeyboardEvent<SVGSVGElement>) {
     if (!interactive) {
@@ -381,6 +498,27 @@ function TrendChart({
         <path d={areaPath} className="chart-area" fill={`url(#${gradientIdRef.current})`} />
         <polyline points={polyline} className="chart-line" fill="none" />
 
+        {targetLineY !== null ? (
+          <g>
+            <line
+              data-testid="detail-chart-target-line"
+              className="chart-target-line"
+              x1={padding.left}
+              y1={targetLineY}
+              x2={width - padding.right}
+              y2={targetLineY}
+            />
+            <text
+              className="chart-target-label"
+              x={width - padding.right - 4}
+              y={Math.max(targetLineY - 6, padding.top + 10)}
+              textAnchor="end"
+            >
+              Target {formatPrice(targetPrice as number, currencyDisplayMode)}
+            </text>
+          </g>
+        ) : null}
+
         {coordinates.map((coordinate, index) => (
           <g key={`${coordinate.point.checked_at}-${index}`}>
             <circle className="chart-point" cx={coordinate.x} cy={coordinate.y} r="2.5" />
@@ -448,6 +586,7 @@ type TernaryFilter = "any" | "yes" | "no";
 type BulkAction = BulkWatchItemPayload["action"];
 type MenuView = "watchlist" | "stats" | "settings";
 type SortableColumn = "product" | "site" | "target" | "current" | "status";
+type RowDensity = "compact" | "comfortable";
 
 const SORT_BY_COLUMN: Record<SortableColumn, { asc: SortOption; desc: SortOption }> = {
   product: { asc: "label_asc", desc: "label_desc" },
@@ -501,6 +640,50 @@ function ProductDetailPage({
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [checkNowFeedback, setCheckNowFeedback] = useState<string | null>(null);
+
+  const historySeriesWithSnapshot = useMemo(() => {
+    if (!history) {
+      return [] as Array<{ checked_at: string; price: number }>;
+    }
+
+    const series = [...history.series];
+    const snapshotCheckedAt = detail?.item.last_checked_at ?? null;
+    const snapshotPrice = detail?.item.current_price ?? null;
+
+    if (!snapshotCheckedAt || snapshotPrice === null) {
+      return series;
+    }
+
+    const snapshotTs = new Date(snapshotCheckedAt).getTime();
+    if (Number.isNaN(snapshotTs)) {
+      return series;
+    }
+
+    const latestSeriesTs = series.length
+      ? new Date(series[series.length - 1].checked_at).getTime()
+      : null;
+
+    if (latestSeriesTs === null || Number.isNaN(latestSeriesTs) || snapshotTs > latestSeriesTs) {
+      series.push({ checked_at: snapshotCheckedAt, price: snapshotPrice });
+    }
+
+    return series;
+  }, [history, detail?.item.last_checked_at, detail?.item.current_price]);
+
+  const displayedLatestPrice =
+    historySeriesWithSnapshot.length > 0
+      ? historySeriesWithSnapshot[historySeriesWithSnapshot.length - 1].price
+      : history?.latest_price ?? null;
+
+  const displayedLowestPrice =
+    historySeriesWithSnapshot.length > 0
+      ? Math.min(...historySeriesWithSnapshot.map((point) => point.price))
+      : history?.lowest_price ?? null;
+
+  const displayedHighestPrice =
+    historySeriesWithSnapshot.length > 0
+      ? Math.max(...historySeriesWithSnapshot.map((point) => point.price))
+      : history?.highest_price ?? null;
 
   async function loadData() {
     setLoading(true);
@@ -624,20 +807,21 @@ function ProductDetailPage({
                 </button>
               ))}
             </div>
-            {history?.checks_count ? (
+            {historySeriesWithSnapshot.length > 0 ? (
               <>
                 <TrendChart
-                  points={history.series}
+                  points={historySeriesWithSnapshot}
                   width={860}
                   height={260}
                   className="detail-chart"
                   interactive
                   daysWindow={days}
+                  targetPrice={detail.item.target_price}
                   currencyDisplayMode={currencyDisplayMode}
                 />
                 <div className="muted">
-                  Latest: {formatPrice(history.latest_price, currencyDisplayMode)} · Lowest: {formatPrice(history.lowest_price, currencyDisplayMode)}
-                  {' '}· Highest: {formatPrice(history.highest_price, currencyDisplayMode)}
+                  Latest: {formatPrice(displayedLatestPrice, currencyDisplayMode)} · Lowest: {formatPrice(displayedLowestPrice, currencyDisplayMode)}
+                  {' '}· Highest: {formatPrice(displayedHighestPrice, currencyDisplayMode)}
                 </div>
               </>
             ) : (
@@ -650,7 +834,9 @@ function ProductDetailPage({
             <div className="snapshot-grid">
               <div>
                 <div className="muted">Current price</div>
-                <strong>{formatPrice(detail.item.current_price, currencyDisplayMode)}</strong>
+                <strong data-testid="detail-current-price">
+                  {formatPrice(detail.item.current_price ?? history?.latest_price, currencyDisplayMode)}
+                </strong>
               </div>
               <div>
                 <div className="muted">Last check</div>
@@ -804,6 +990,8 @@ export function App() {
   const [bulkAction, setBulkAction] = useState<BulkAction>("pause");
   const [bulkTargetPrice, setBulkTargetPrice] = useState("");
   const [bulkWorking, setBulkWorking] = useState(false);
+  const [rowDensity, setRowDensity] = useState<RowDensity>("compact");
+  const [statusContextItemId, setStatusContextItemId] = useState<number | null>(null);
   const [health, setHealth] = useState<WatchlistHealthResponse | null>(null);
   const labelRef = useRef(customLabel);
   const labelDirtyRef = useRef(labelDirty);
@@ -897,6 +1085,12 @@ export function App() {
   useEffect(() => {
     setSelectedItemIds((previous) =>
       previous.filter((itemId) => items.some((item) => item.id === itemId)),
+    );
+  }, [items]);
+
+  useEffect(() => {
+    setStatusContextItemId((previous) =>
+      previous !== null && !items.some((item) => item.id === previous) ? null : previous,
     );
   }, [items]);
 
@@ -1514,6 +1708,25 @@ export function App() {
             </div>
 
             <div className="actions-row compact-actions-row">
+              <label className="inline-field small-inline-field">
+                <span>Density</span>
+                <div className="density-toggle" role="group" aria-label="Row density">
+                  <button
+                    type="button"
+                    className={rowDensity === "compact" ? "pill active" : "pill"}
+                    onClick={() => setRowDensity("compact")}
+                  >
+                    Compact
+                  </button>
+                  <button
+                    type="button"
+                    className={rowDensity === "comfortable" ? "pill active" : "pill"}
+                    onClick={() => setRowDensity("comfortable")}
+                  >
+                    Comfortable
+                  </button>
+                </div>
+              </label>
               <span className="muted compact-count">Showing {items.length} of {total}</span>
             </div>
 
@@ -1561,7 +1774,7 @@ export function App() {
             {items.length === 0 ? (
               <p>No watched items yet.</p>
             ) : (
-              <table className="compact-table">
+              <table className={`compact-table density-${rowDensity}`}>
                 <thead>
                   <tr>
                     <th>
@@ -1612,22 +1825,63 @@ export function App() {
                         />
                       </td>
                       <td className="product-col">
-                        <a
-                          href={`/products/${item.id}`}
-                          className="product-link"
-                          onClick={(event) => {
-                            event.preventDefault();
-                            navigate(`/products/${item.id}`);
-                          }}
-                        >
-                          {item.custom_label || "(no label)"}
-                        </a>
+                        <div className="product-cell">
+                          <div className="product-thumb" data-testid={`thumbnail-${item.id}`} aria-hidden="true">
+                            <span className="product-thumb-fallback">{getThumbnailFallbackText(item)}</span>
+                            {getProductThumbnailUrl(item.url) ? (
+                              <img
+                                src={getProductThumbnailUrl(item.url) ?? undefined}
+                                alt=""
+                                loading="lazy"
+                                onError={(event) => {
+                                  event.currentTarget.style.display = "none";
+                                }}
+                              />
+                            ) : null}
+                          </div>
+                          <a
+                            href={`/products/${item.id}`}
+                            className="product-link"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              navigate(`/products/${item.id}`);
+                            }}
+                          >
+                            {item.custom_label || "(no label)"}
+                          </a>
+                        </div>
                       </td>
                       <td>{item.site_key}</td>
                       <td>{formatPrice(item.target_price, currencyDisplayMode)}</td>
                       <td>{formatPrice(item.current_price, currencyDisplayMode)}</td>
                       <td>
-                        <span>{item.last_status || "-"}</span>
+                        {(() => {
+                          const meta = getStatusMeta(item.last_status);
+                          const expanded = statusContextItemId === item.id;
+                          return (
+                            <div className="status-cell">
+                              <button
+                                type="button"
+                                className={`status-badge status-${meta.tone}`}
+                                data-testid={`status-badge-${item.id}`}
+                                aria-expanded={expanded}
+                                aria-controls={`status-context-${item.id}`}
+                                onClick={() => {
+                                  setStatusContextItemId((previous) => (previous === item.id ? null : item.id));
+                                }}
+                              >
+                                {meta.label}
+                              </button>
+                              <span className="muted compact-cell-sub">{formatRelativeTime(item.last_checked_at)}</span>
+                              {expanded ? (
+                                <div id={`status-context-${item.id}`} className="status-context" role="status">
+                                  <strong>{meta.label}</strong>
+                                  <span>{meta.description}</span>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td>
                         <div className="row-actions row-actions-compact">
