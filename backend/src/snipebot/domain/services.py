@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -20,6 +21,12 @@ TRACKING_QUERY_KEYS = {
     "ref_src",
     "source",
 }
+
+
+@dataclass(frozen=True)
+class PriceHistoryPoint:
+    checked_at: datetime
+    price: float
 
 
 def _normalize_tag_name(value: str) -> str:
@@ -681,32 +688,79 @@ def get_watch_item_price_history(
     owner_id: str,
     item_id: int,
     days: int = 30,
-    max_points: int = 200,
-) -> tuple[WatchItem | None, list[PriceCheck]]:
+    max_points: int = 2000,
+    resolution: str = "auto",
+) -> tuple[WatchItem | None, list[PriceHistoryPoint]]:
     item = db_session.scalar(
         select(WatchItem).where(WatchItem.owner_id == owner_id, WatchItem.id == item_id)
     )
     if item is None:
         return None, []
 
-    safe_days = max(1, min(days, 365))
-    safe_limit = max(1, min(max_points, 1000))
+    # Support multi-year history windows while still keeping a safe upper bound.
+    safe_days = max(1, min(days, 3650))
+    safe_limit = max(1, min(max_points, 4000))
+    safe_resolution = resolution if resolution in {"auto", "raw", "daily"} else "auto"
+    mode = (
+        "daily"
+        if safe_resolution == "daily" or (safe_resolution == "auto" and safe_days > 90)
+        else "raw"
+    )
     since = datetime.now(UTC) - timedelta(days=safe_days)
 
+    if mode == "raw":
+        statement = (
+            select(PriceCheck)
+            .where(
+                PriceCheck.watch_item_id == item.id,
+                PriceCheck.status == "ok",
+                PriceCheck.current_price.is_not(None),
+                PriceCheck.checked_at >= since,
+            )
+            .order_by(PriceCheck.checked_at.desc(), PriceCheck.id.desc())
+            .limit(safe_limit)
+        )
+
+        checks = list(db_session.scalars(statement).all())
+        checks.reverse()
+        return (
+            item,
+            [
+                PriceHistoryPoint(
+                    checked_at=check.checked_at, price=float(check.current_price)
+                )
+                for check in checks
+                if check.current_price is not None
+            ],
+        )
+
+    day_bucket = func.date(PriceCheck.checked_at)
     statement = (
-        select(PriceCheck)
+        select(
+            func.max(PriceCheck.checked_at).label("checked_at"),
+            func.avg(PriceCheck.current_price).label("price"),
+        )
         .where(
             PriceCheck.watch_item_id == item.id,
             PriceCheck.status == "ok",
             PriceCheck.current_price.is_not(None),
             PriceCheck.checked_at >= since,
         )
-        .order_by(PriceCheck.checked_at.asc())
+        .group_by(day_bucket)
+        .order_by(day_bucket.desc())
         .limit(safe_limit)
     )
 
-    checks = list(db_session.scalars(statement).all())
-    return item, checks
+    rows = list(db_session.execute(statement).all())
+    rows.reverse()
+    return (
+        item,
+        [
+            PriceHistoryPoint(checked_at=checked_at, price=float(price))
+            for checked_at, price in rows
+            if checked_at is not None and price is not None
+        ],
+    )
 
 
 def list_watch_item_alert_events(

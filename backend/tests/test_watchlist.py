@@ -257,6 +257,96 @@ def test_watch_item_history_returns_series_and_summary() -> None:
     assert len(payload["series"]) == 3
 
 
+def test_watch_item_history_supports_more_than_one_year_window() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/watchlist",
+        json={
+            "url": "https://www.hema.nl/wonen-slapen/lamp-long-history",
+            "custom_label": "Long History Lamp",
+        },
+    )
+    assert create_response.status_code == 200
+    item_id = create_response.json()["item"]["id"]
+
+    now = datetime.now(UTC)
+    with get_engine().begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO price_checks (watch_item_id, checked_at, adapter_key, status, current_price, currency, availability, used_fallback)
+                VALUES (:item_id, :d730, 'hema', 'ok', 45.00, 'EUR', 'in_stock', 0),
+                       (:item_id, :d400, 'hema', 'ok', 39.00, 'EUR', 'in_stock', 0),
+                       (:item_id, :d20, 'hema', 'ok', 35.50, 'EUR', 'in_stock', 0)
+                """
+            ),
+            {
+                "item_id": item_id,
+                "d730": now - timedelta(days=730),
+                "d400": now - timedelta(days=400),
+                "d20": now - timedelta(days=20),
+            },
+        )
+
+    response = client.get(f"/watchlist/{item_id}/history", params={"days": 731})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["item_id"] == item_id
+    assert payload["checks_count"] == 3
+    assert payload["lowest_price"] == 35.5
+    assert payload["highest_price"] == 45.0
+    assert len(payload["series"]) == 3
+
+
+def test_watch_item_history_auto_resolution_uses_daily_aggregation_for_long_windows() -> (
+    None
+):
+    _reset_watch_items()
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/watchlist",
+        json={
+            "url": "https://www.hema.nl/wonen-slapen/lamp-auto-resolution",
+            "custom_label": "Auto Resolution Lamp",
+        },
+    )
+    assert create_response.status_code == 200
+    item_id = create_response.json()["item"]["id"]
+
+    now = datetime.now(UTC)
+    with get_engine().begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO price_checks (watch_item_id, checked_at, adapter_key, status, current_price, currency, availability, used_fallback)
+                VALUES (:item_id, :d100a, 'hema', 'ok', 10.00, 'EUR', 'in_stock', 0),
+                       (:item_id, :d100b, 'hema', 'ok', 12.00, 'EUR', 'in_stock', 0),
+                       (:item_id, :d20, 'hema', 'ok', 8.00, 'EUR', 'in_stock', 0)
+                """
+            ),
+            {
+                "item_id": item_id,
+                "d100a": now - timedelta(days=100, hours=1),
+                "d100b": now - timedelta(days=100, hours=2),
+                "d20": now - timedelta(days=20),
+            },
+        )
+
+    response = client.get(f"/watchlist/{item_id}/history", params={"days": 180})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["checks_count"] == 2
+    assert payload["lowest_price"] == 8.0
+    assert payload["highest_price"] == 11.0
+    assert payload["latest_price"] == 8.0
+    assert len(payload["series"]) == 2
+
+
 def test_watch_item_detail_includes_lows_and_patch_updates_notes() -> None:
     _reset_watch_items()
     client = TestClient(app)

@@ -725,6 +725,7 @@ def restore_item(
 def get_watch_item_history(
     item_id: int,
     days: int = 30,
+    resolution: str = Query(default="auto", pattern="^(auto|raw|daily)$"),
     identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
 ) -> WatchItemHistoryResponse:
@@ -735,15 +736,12 @@ def get_watch_item_history(
         owner_id=owner_id,
         item_id=item_id,
         days=days,
+        resolution=resolution,
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Watch item not found")
 
-    prices = [
-        float(check.current_price)
-        for check in checks
-        if check.current_price is not None
-    ]
+    prices = [point.price for point in checks]
     latest_price = prices[-1] if prices else None
     lowest_price = min(prices) if prices else None
     highest_price = max(prices) if prices else None
@@ -757,10 +755,9 @@ def get_watch_item_history(
         highest_price=highest_price,
         series=[
             WatchItemHistoryPointResponse(
-                checked_at=check.checked_at,
-                price=float(check.current_price),
+                checked_at=point.checked_at,
+                price=point.price,
             )
-            for check in checks
-            if check.current_price is not None
+            for point in checks
         ],
     )

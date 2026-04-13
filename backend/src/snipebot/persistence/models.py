@@ -118,6 +118,9 @@ class AlertEvent(Base):
     price_check_id: Mapped[int] = mapped_column(
         ForeignKey("price_checks.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    price_check_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     alert_kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     dedup_key: Mapped[str] = mapped_column(String(255), nullable=False)
     channel: Mapped[str] = mapped_column(String(32), nullable=False, default="telegram")

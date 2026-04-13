@@ -101,3 +101,14 @@ def _ensure_legacy_columns() -> None:
                     "ALTER TABLE watch_items ADD COLUMN dead_letter_reason VARCHAR(255)"
                 )
             )
+
+        alert_rows = connection.execute(
+            text("PRAGMA table_info('alert_events')")
+        ).fetchall()
+        alert_columns = {row[1] for row in alert_rows}
+        if "price_check_checked_at" not in alert_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE alert_events ADD COLUMN price_check_checked_at DATETIME"
+                )
+            )

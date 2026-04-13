@@ -289,6 +289,7 @@ def _dispatch_alerts_for_success(
             AlertEvent(
                 watch_item_id=item.id,
                 price_check_id=check.id,
+                price_check_checked_at=check.checked_at,
                 alert_kind=intent.kind,
                 dedup_key=intent.dedup_key,
                 channel="telegram",

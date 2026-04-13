@@ -111,10 +111,18 @@ Minimum required to run with defaults: copy `.env.example` and adjust only what 
 - `SNIPEBOT_ENV` (default: `production`)
 - `SNIPEBOT_LOG_LEVEL` (default: `INFO`)
 - `SNIPEBOT_DB_URL` (default: `sqlite:////data/snipebot.db`)
+  - Production recommendation: `postgresql+psycopg://<user>:<pass>@<host>:5432/<db>`
 - `SNIPEBOT_WORKER_INTERVAL_SECONDS` (default: `60`)
 - `SNIPEBOT_CHECK_INTERVAL_SECONDS` (default: `1800`)
 - `SNIPEBOT_RETRY_INTERVAL_SECONDS` (default: `300`)
 - `SNIPEBOT_WORKER_BATCH_SIZE` (default: `25`)
+
+### Optional PostgreSQL/Timescale (Compose profile)
+- `SNIPEBOT_POSTGRES_DB` (default: `snipebot`)
+- `SNIPEBOT_POSTGRES_USER` (default: `snipebot`)
+- `SNIPEBOT_POSTGRES_PASSWORD` (default: `snipebot`)
+- `SNIPEBOT_POSTGRES_BIND` (default: `127.0.0.1`)
+- `SNIPEBOT_POSTGRES_PORT` (default: `5432`)
 
 ### Notification runtime (optional)
 - `SNIPEBOT_NOTIFICATIONS_ENABLED`
@@ -145,6 +153,33 @@ Minimum required to run with defaults: copy `.env.example` and adjust only what 
 - API and worker mount it at `/data`.
 - SQLite file path defaults to `/data/snipebot.db`.
 - Data survives container rebuild/restart until volume is removed.
+- Optional PostgreSQL profile uses `postgres_data` for Timescale/PostgreSQL persistence.
+
+## PostgreSQL + Timescale workflow (recommended for long history)
+
+Start Timescale service:
+
+```bash
+docker compose --profile postgres up -d db
+```
+
+Set DB URL in `.env`:
+
+```bash
+SNIPEBOT_DB_URL=postgresql+psycopg://snipebot:snipebot@db:5432/snipebot
+```
+
+Run migrations from `backend/`:
+
+```bash
+alembic upgrade head
+```
+
+The first migration enables Timescale for `price_checks` and configures:
+- hypertable conversion,
+- query indexes for watch-item history,
+- compression policy,
+- 24-month retention policy.
 
 Backup example:
 

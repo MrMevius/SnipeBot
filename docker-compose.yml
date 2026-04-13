@@ -1,4 +1,23 @@
 services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: ${SNIPEBOT_POSTGRES_DB:-snipebot}
+      POSTGRES_USER: ${SNIPEBOT_POSTGRES_USER:-snipebot}
+      POSTGRES_PASSWORD: ${SNIPEBOT_POSTGRES_PASSWORD:-snipebot}
+    ports:
+      - "${SNIPEBOT_POSTGRES_BIND:-127.0.0.1}:${SNIPEBOT_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SNIPEBOT_POSTGRES_USER:-snipebot} -d ${SNIPEBOT_POSTGRES_DB:-snipebot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
   api:
     image: snipebot-backend:latest
     build:
@@ -86,3 +105,4 @@ services:
 
 volumes:
   sqlite_data:
+  postgres_data:
