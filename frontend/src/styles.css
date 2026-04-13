@@ -52,6 +52,53 @@ body {
   gap: 8px;
 }
 
+.global-menubar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.global-menubar-brand {
+  font-size: 20px;
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.global-menubar-toggle {
+  display: none;
+  margin-left: auto;
+}
+
+.global-menubar-nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.global-menubar-link {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 8px 12px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.global-menubar-link:hover {
+  color: var(--text);
+  border-color: var(--panel-border);
+}
+
+.global-menubar-link.active {
+  color: #fff;
+  background: #1f6feb;
+  border-color: #1f6feb;
+}
+
 .button-link {
   display: inline-flex;
   align-items: center;
@@ -317,6 +364,36 @@ td {
 .menu-tabs {
   display: flex;
   gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .global-menubar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .global-menubar-toggle {
+    display: inline-flex;
+  }
+
+  .global-menubar-nav {
+    width: 100%;
+    margin-left: 0;
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .global-menubar-nav.open {
+    display: flex;
+  }
+
+  .global-menubar-link {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+  }
 }
 
 .compact-table th,

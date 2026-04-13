@@ -97,7 +97,8 @@ describe("App", () => {
     });
 
     render(<App />);
-    expect(screen.getByText("SnipeBot Watchlist")).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "Hoofdnavigatie" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Watchlist" }).getAttribute("aria-current")).toBe("page");
     expect(await screen.findByText("Lamp")).toBeTruthy();
     expect(screen.getByTestId("thumbnail-1")).toBeTruthy();
     expect(screen.getByText("hema")).toBeTruthy();
@@ -333,6 +334,8 @@ describe("App", () => {
     });
 
     render(<App />);
+
+    expect(screen.getByRole("link", { name: "Add product" }).getAttribute("aria-current")).toBe("page");
 
     fireEvent.change(screen.getByPlaceholderText("https://..."), {
       target: { value: "https://amazon.nl/dp/abc" },
@@ -932,8 +935,8 @@ describe("App", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByText("Menu"));
-    fireEvent.click(screen.getByText("Settings"));
+    fireEvent.click(await screen.findByRole("link", { name: "Settings" }));
+    expect(screen.getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
 
     fireEvent.click(screen.getByLabelText("Notifications enabled"));
     fireEvent.click(screen.getByLabelText("Telegram channel enabled"));

@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   archiveWatchItem,
   bulkUpdateWatchItems,
@@ -587,6 +587,15 @@ type BulkAction = BulkWatchItemPayload["action"];
 type MenuView = "watchlist" | "stats" | "settings";
 type SortableColumn = "product" | "site" | "target" | "current" | "status";
 type RowDensity = "compact" | "comfortable";
+type GlobalMenuKey = MenuView | "add-product";
+
+type GlobalMenuItem = {
+  key: GlobalMenuKey;
+  label: string;
+  href: string;
+  active: boolean;
+  onClick: (event: MouseEvent<HTMLAnchorElement>) => void;
+};
 
 const SORT_BY_COLUMN: Record<SortableColumn, { asc: SortOption; desc: SortOption }> = {
   product: { asc: "label_asc", desc: "label_desc" },
@@ -617,16 +626,80 @@ function parseRoute(pathname: string): Route {
   return { kind: "overview" };
 }
 
+function GlobalTopMenubar({
+  items,
+  menuOpen,
+  onToggleMenu,
+}: {
+  items: GlobalMenuItem[];
+  menuOpen: boolean;
+  onToggleMenu: () => void;
+}) {
+  return (
+    <header className="global-menubar panel">
+      <a
+        href="/"
+        className="global-menubar-brand"
+        onClick={(event) => {
+          const watchlistItem = items.find((item) => item.key === "watchlist");
+          if (!watchlistItem) {
+            return;
+          }
+          watchlistItem.onClick(event);
+        }}
+      >
+        SnipeBot
+      </a>
+
+      <button
+        type="button"
+        className="secondary global-menubar-toggle"
+        onClick={onToggleMenu}
+        aria-expanded={menuOpen}
+        aria-controls="global-menubar-nav"
+      >
+        {menuOpen ? "Close menu" : "Menu"}
+      </button>
+
+      <nav
+        id="global-menubar-nav"
+        className={`global-menubar-nav${menuOpen ? " open" : ""}`}
+        aria-label="Hoofdnavigatie"
+      >
+        {items.map((item) => (
+          <a
+            key={item.key}
+            href={item.href}
+            className={`global-menubar-link${item.active ? " active" : ""}`}
+            aria-current={item.active ? "page" : undefined}
+            onClick={item.onClick}
+          >
+            {item.label}
+          </a>
+        ))}
+      </nav>
+    </header>
+  );
+}
+
 function ProductDetailPage({
   itemId,
   onNavigate,
   currencyDisplayMode,
   defaultHistoryDays,
+  menuView,
+  menuOpen,
+  onToggleMenu,
+  onSelectMenuView,
 }: {
   itemId: number;
   onNavigate: (href: string) => void;
   currencyDisplayMode: CurrencyDisplayMode;
   defaultHistoryDays: 7 | 30 | 90;
+  menuView: MenuView;
+  menuOpen: boolean;
+  onToggleMenu: () => void;
+  onSelectMenuView: (view: MenuView) => void;
 }) {
   const [detail, setDetail] = useState<WatchItemDetailResponse | null>(null);
   const [history, setHistory] = useState<WatchItemHistoryResponse | null>(null);
@@ -772,8 +845,53 @@ function ProductDetailPage({
     }
   }
 
+  const menuItems: GlobalMenuItem[] = [
+    {
+      key: "watchlist",
+      label: "Watchlist",
+      href: "/",
+      active: menuView === "watchlist",
+      onClick: (event) => {
+        event.preventDefault();
+        onSelectMenuView("watchlist");
+      },
+    },
+    {
+      key: "add-product",
+      label: "Add product",
+      href: "/add-product",
+      active: false,
+      onClick: (event) => {
+        event.preventDefault();
+        onNavigate("/add-product");
+      },
+    },
+    {
+      key: "stats",
+      label: "Stats",
+      href: "/",
+      active: menuView === "stats",
+      onClick: (event) => {
+        event.preventDefault();
+        onSelectMenuView("stats");
+      },
+    },
+    {
+      key: "settings",
+      label: "Settings",
+      href: "/",
+      active: menuView === "settings",
+      onClick: (event) => {
+        event.preventDefault();
+        onSelectMenuView("settings");
+      },
+    },
+  ];
+
   return (
     <main className="container">
+      <GlobalTopMenubar items={menuItems} menuOpen={menuOpen} onToggleMenu={onToggleMenu} />
+
       <div className="page-header">
         <button type="button" className="secondary" onClick={() => onNavigate("/")}>
           ← Back to watchlist
@@ -995,6 +1113,60 @@ export function App() {
   const [health, setHealth] = useState<WatchlistHealthResponse | null>(null);
   const labelRef = useRef(customLabel);
   const labelDirtyRef = useRef(labelDirty);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [route.kind, menuView]);
+
+  function selectOverviewView(view: MenuView) {
+    setMenuView(view);
+    if (route.kind !== "overview") {
+      navigate("/");
+    }
+  }
+
+  const globalMenuItems: GlobalMenuItem[] = [
+    {
+      key: "watchlist",
+      label: "Watchlist",
+      href: "/",
+      active: route.kind === "overview" && menuView === "watchlist",
+      onClick: (event) => {
+        event.preventDefault();
+        selectOverviewView("watchlist");
+      },
+    },
+    {
+      key: "add-product",
+      label: "Add product",
+      href: "/add-product",
+      active: route.kind === "add-product",
+      onClick: (event) => {
+        event.preventDefault();
+        navigate("/add-product");
+      },
+    },
+    {
+      key: "stats",
+      label: "Stats",
+      href: "/",
+      active: route.kind === "overview" && menuView === "stats",
+      onClick: (event) => {
+        event.preventDefault();
+        selectOverviewView("stats");
+      },
+    },
+    {
+      key: "settings",
+      label: "Settings",
+      href: "/",
+      active: route.kind === "overview" && menuView === "settings",
+      onClick: (event) => {
+        event.preventDefault();
+        selectOverviewView("settings");
+      },
+    },
+  ];
 
   function navigate(href: string) {
     window.history.pushState(null, "", href);
@@ -1347,6 +1519,10 @@ export function App() {
         onNavigate={navigate}
         currencyDisplayMode={currencyDisplayMode}
         defaultHistoryDays={defaultHistoryDays}
+        menuView={menuView}
+        menuOpen={menuOpen}
+        onToggleMenu={() => setMenuOpen((previous) => !previous)}
+        onSelectMenuView={selectOverviewView}
       />
     );
   }
@@ -1354,24 +1530,14 @@ export function App() {
   if (route.kind === "add-product") {
     return (
       <main className="container">
-        <header className="topbar panel">
-          <h1>Add product</h1>
-          <div className="topbar-actions">
-            <a
-              className="button-link"
-              href="/"
-              onClick={(event) => {
-                event.preventDefault();
-                navigate("/");
-              }}
-            >
-              Back to watchlist
-            </a>
-          </div>
-        </header>
+        <GlobalTopMenubar
+          items={globalMenuItems}
+          menuOpen={menuOpen}
+          onToggleMenu={() => setMenuOpen((previous) => !previous)}
+        />
 
         <section id="add-product" className="panel compact-form">
-          <h2>Add Product</h2>
+          <h1>Add Product</h1>
           <form onSubmit={handleSubmit}>
             <div className="compact-grid">
               <label>
@@ -1429,65 +1595,11 @@ export function App() {
 
   return (
     <main className="container">
-      <header className="topbar panel">
-        <h1>SnipeBot Watchlist</h1>
-        <div className="topbar-actions">
-          <a
-            className="button-link"
-            href="/add-product"
-            onClick={(event) => {
-              event.preventDefault();
-              navigate("/add-product");
-            }}
-          >
-            Add product
-          </a>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setMenuOpen((previous) => !previous)}
-          >
-            {menuOpen ? "Close menu" : "Menu"}
-          </button>
-        </div>
-      </header>
-
-      {menuOpen ? (
-        <section className="panel menu-panel">
-          <div className="menu-tabs" role="tablist" aria-label="Main menu views">
-            <button
-              type="button"
-              className={menuView === "watchlist" ? "pill active" : "pill"}
-              onClick={() => {
-                setMenuView("watchlist");
-                setMenuOpen(false);
-              }}
-            >
-              Watchlist
-            </button>
-            <button
-              type="button"
-              className={menuView === "stats" ? "pill active" : "pill"}
-              onClick={() => {
-                setMenuView("stats");
-                setMenuOpen(false);
-              }}
-            >
-              Stats
-            </button>
-            <button
-              type="button"
-              className={menuView === "settings" ? "pill active" : "pill"}
-              onClick={() => {
-                setMenuView("settings");
-                setMenuOpen(false);
-              }}
-            >
-              Settings
-            </button>
-          </div>
-        </section>
-      ) : null}
+      <GlobalTopMenubar
+        items={globalMenuItems}
+        menuOpen={menuOpen}
+        onToggleMenu={() => setMenuOpen((previous) => !previous)}
+      />
 
       {menuView === "stats" ? (
         <section className="panel">
