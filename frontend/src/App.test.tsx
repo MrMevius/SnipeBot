@@ -100,10 +100,11 @@ describe("App", () => {
     expect(screen.getByRole("navigation", { name: "Hoofdnavigatie" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Watchlist" }).getAttribute("aria-current")).toBe("page");
     expect(await screen.findByText("Lamp")).toBeTruthy();
+    expect(screen.getByTestId("watchlist-preview-1")).toBeTruthy();
     expect(screen.getByTestId("thumbnail-1")).toBeTruthy();
-    expect(screen.getByText("hema")).toBeTruthy();
-    expect(screen.getByText("Wacht op check")).toBeTruthy();
-    expect(screen.getByText("Nog niet gecheckt")).toBeTruthy();
+    expect(screen.getAllByText("hema").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Wacht op check").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Nog niet gecheckt").length).toBeGreaterThan(0);
     expect(screen.queryByPlaceholderText("https://...")).toBeNull();
     expect(screen.queryByText("Trend")).toBeNull();
     expect(screen.queryByText("Flags")).toBeNull();
@@ -195,8 +196,8 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("Desk lamp")).toBeTruthy();
-    expect(screen.getByText("In orde")).toBeTruthy();
-    expect(screen.getByText("10 min geleden")).toBeTruthy();
+    expect(screen.getAllByText("In orde").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("10 min geleden").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByTestId("status-badge-1"));
     expect(await screen.findByText("Laatste prijscheck was succesvol.")).toBeTruthy();
@@ -598,6 +599,7 @@ describe("App", () => {
     fireEvent.click(await screen.findByText("Lamp"));
 
     expect(await screen.findByText(/Product Detail/)).toBeTruthy();
+    expect(screen.getByTestId("detail-preview-1")).toBeTruthy();
     expect(screen.getByTestId("detail-thumbnail-1")).toBeTruthy();
     expect(await screen.findByText("7 day low")).toBeTruthy();
 
@@ -738,6 +740,7 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText(/Product Detail/)).toBeTruthy();
+    expect(screen.getByTestId("detail-preview-1")).toBeTruthy();
     expect(screen.getByTestId("detail-thumbnail-1")).toBeTruthy();
     expect(screen.queryByTestId("detail-chart-target-line")).toBeNull();
     expect(screen.getByTestId("detail-current-price").textContent).toBe("€ 18.00");

@@ -169,6 +169,7 @@ def test_watchlist_preview_returns_product_metadata(monkeypatch) -> None:
                     current_price=Decimal("19.99"),
                     currency="EUR",
                     availability="in_stock",
+                    image_url="https://images.example.test/headphones.jpg",
                 ),
             )
 
@@ -184,6 +185,7 @@ def test_watchlist_preview_returns_product_metadata(monkeypatch) -> None:
     assert payload["title"] == "Test Headphones"
     assert payload["current_price"] == 19.99
     assert payload["currency"] == "EUR"
+    assert payload["image_url"] == "https://images.example.test/headphones.jpg"
     assert payload["suggested_label"] == "Test Headphones"
 
 

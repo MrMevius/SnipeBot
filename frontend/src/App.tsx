@@ -217,24 +217,90 @@ function ProductThumbnail({
   testId?: string;
   size?: "small" | "large";
 }) {
-  const thumbnailUrl = getProductThumbnailUrl(item.url);
+  const shopThumbnailUrl = getProductThumbnailUrl(item.url);
+  const primaryThumbnailUrl = item.image_url || shopThumbnailUrl;
+  const shopFallbackText = (item.site_key || "?").slice(0, 2).toUpperCase();
   return (
     <div
-      className={`product-thumb ${size === "large" ? "product-thumb-large" : ""}`.trim()}
+      className={`product-thumb-pair ${size === "large" ? "product-thumb-pair-large" : ""}`.trim()}
       data-testid={testId}
       aria-hidden="true"
     >
-      <span className="product-thumb-fallback">{getThumbnailFallbackText(item)}</span>
-      {thumbnailUrl ? (
-        <img
-          src={thumbnailUrl}
-          alt=""
-          loading="lazy"
-          onError={(event) => {
-            event.currentTarget.style.display = "none";
-          }}
-        />
+      <div className={`product-thumb ${size === "large" ? "product-thumb-large" : ""}`.trim()}>
+        <span className="product-thumb-fallback">{getThumbnailFallbackText(item)}</span>
+        {primaryThumbnailUrl ? (
+          <img
+            src={primaryThumbnailUrl}
+            alt=""
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={(event) => {
+              if (item.image_url && shopThumbnailUrl && event.currentTarget.dataset.fallbackApplied !== "true") {
+                event.currentTarget.src = shopThumbnailUrl;
+                event.currentTarget.dataset.fallbackApplied = "true";
+                return;
+              }
+              event.currentTarget.style.display = "none";
+            }}
+          />
+        ) : null}
+      </div>
+      {shopThumbnailUrl ? (
+        <div className={`shop-thumb ${size === "large" ? "shop-thumb-large" : ""}`.trim()}>
+          <span className="shop-thumb-fallback">{shopFallbackText}</span>
+          <img
+            src={shopThumbnailUrl}
+            alt=""
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={(event) => {
+              event.currentTarget.style.display = "none";
+            }}
+          />
+        </div>
       ) : null}
+    </div>
+  );
+}
+
+function ProductInlinePreview({
+  item,
+  currencyDisplayMode,
+  size = "small",
+  thumbnailTestId,
+  testId,
+  linkHref,
+  onLinkClick,
+}: {
+  item: WatchItem;
+  currencyDisplayMode: CurrencyDisplayMode;
+  size?: "small" | "large";
+  thumbnailTestId?: string;
+  testId?: string;
+  linkHref?: string;
+  onLinkClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  const statusMeta = getStatusMeta(item.last_status);
+  const productName = deriveProductName(item.custom_label, item.url);
+
+  return (
+    <div className="product-inline-preview" data-testid={testId}>
+      <ProductThumbnail item={item} size={size} testId={thumbnailTestId} />
+      <div className="product-inline-preview-body">
+        {linkHref ? (
+          <a href={linkHref} className="product-link product-preview-title" onClick={onLinkClick}>
+            {productName}
+          </a>
+        ) : (
+          <strong className="product-preview-title">{productName}</strong>
+        )}
+        <div className="product-preview-meta">
+          <span>{item.site_key}</span>
+          <span>{formatPrice(item.current_price, currencyDisplayMode)}</span>
+          <span>{statusMeta.label}</span>
+        </div>
+        <div className="muted product-preview-sub">{formatRelativeTime(item.last_checked_at)}</div>
+      </div>
     </div>
   );
 }
@@ -980,9 +1046,15 @@ function ProductDetailPage({
 
           <section className="panel">
             <div className="detail-product-head">
-              <ProductThumbnail item={detail.item} size="large" testId={`detail-thumbnail-${detail.item.id}`} />
               <h2>Snapshot</h2>
             </div>
+            <ProductInlinePreview
+              item={detail.item}
+              currencyDisplayMode={currencyDisplayMode}
+              size="large"
+              thumbnailTestId={`detail-thumbnail-${detail.item.id}`}
+              testId={`detail-preview-${detail.item.id}`}
+            />
             <div className="snapshot-grid">
               <div>
                 <div className="muted">Current price</div>
@@ -1971,19 +2043,17 @@ export function App() {
                         />
                       </td>
                       <td className="product-col">
-                        <div className="product-cell">
-                          <ProductThumbnail item={item} testId={`thumbnail-${item.id}`} />
-                          <a
-                            href={`/products/${item.id}`}
-                            className="product-link"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              navigate(`/products/${item.id}`);
-                            }}
-                          >
-                            {item.custom_label || "(no label)"}
-                          </a>
-                        </div>
+                        <ProductInlinePreview
+                          item={item}
+                          currencyDisplayMode={currencyDisplayMode}
+                          thumbnailTestId={`thumbnail-${item.id}`}
+                          testId={`watchlist-preview-${item.id}`}
+                          linkHref={`/products/${item.id}`}
+                          onLinkClick={(event) => {
+                            event.preventDefault();
+                            navigate(`/products/${item.id}`);
+                          }}
+                        />
                       </td>
                       <td>{item.site_key}</td>
                       <td>{formatPrice(item.target_price, currencyDisplayMode)}</td>

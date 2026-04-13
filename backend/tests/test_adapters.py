@@ -8,6 +8,7 @@ from snipebot.adapters.sites.amazon_nl import AmazonNlAdapter
 from snipebot.adapters.sites.base import ParsedProductData, SiteAdapter
 from snipebot.adapters.sites.hema import HemaAdapter
 from snipebot.adapters.sites.parsing import (
+    extract_image_url,
     extract_price,
     extract_title,
     infer_availability,
@@ -55,6 +56,22 @@ def test_parsing_edge_cases() -> None:
 
     with pytest.raises(ValueError, match="Could not parse product price"):
         extract_price("<span>Price unavailable</span>")
+
+
+def test_extract_image_url_from_meta_and_jsonld() -> None:
+    html_meta = '<meta property="og:image" content="https://cdn.example.com/p.jpg" />'
+    assert (
+        extract_image_url(html_meta, "https://example.com/product/1")
+        == "https://cdn.example.com/p.jpg"
+    )
+
+    html_jsonld = (
+        '<script type="application/ld+json">{"image":"/images/item.jpg"}</script>'
+    )
+    assert (
+        extract_image_url(html_jsonld, "https://example.com/product/1")
+        == "https://example.com/images/item.jpg"
+    )
 
 
 @pytest.mark.parametrize(

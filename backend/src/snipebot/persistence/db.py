@@ -102,6 +102,11 @@ def _ensure_legacy_columns() -> None:
                 )
             )
 
+        if "image_url" not in existing_columns:
+            connection.execute(
+                text("ALTER TABLE watch_items ADD COLUMN image_url TEXT")
+            )
+
         alert_rows = connection.execute(
             text("PRAGMA table_info('alert_events')")
         ).fetchall()

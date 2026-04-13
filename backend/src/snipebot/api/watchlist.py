@@ -55,6 +55,7 @@ class WatchItemResponse(BaseModel):
     notes: str | None
     target_price: float | None
     site_key: str
+    image_url: str | None
     active: bool
     current_price: float | None
     last_checked_at: datetime | None
@@ -85,6 +86,7 @@ class WatchItemPreviewResponse(BaseModel):
     current_price: float
     currency: str
     availability: str
+    image_url: str | None
     suggested_label: str
 
 
@@ -225,6 +227,7 @@ def _to_response(item: WatchItem) -> WatchItemResponse:
         notes=item.notes,
         target_price=_money_to_float(item.target_price),
         site_key=item.site_key,
+        image_url=item.image_url,
         active=item.active,
         current_price=_money_to_float(item.current_price),
         last_checked_at=item.last_checked_at,
@@ -557,6 +560,7 @@ def preview_watch_item_url(
         current_price=float(result.data.current_price),
         currency=result.data.currency,
         availability=result.data.availability,
+        image_url=result.data.image_url,
         suggested_label=result.data.title,
     )
 

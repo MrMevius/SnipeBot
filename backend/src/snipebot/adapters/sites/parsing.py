@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal, InvalidOperation
 from html import unescape
+from urllib.parse import urljoin
 
 TITLE_PATTERN = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 PRICE_PATTERN = re.compile(
@@ -14,6 +15,10 @@ JSON_LD_PRICE_PATTERN = re.compile(
 )
 META_PRICE_TAG_PATTERN = re.compile(r"<meta[^>]*>", re.IGNORECASE)
 META_CONTENT_PATTERN = re.compile(r"content=['\"]([^'\"]+)['\"]", re.IGNORECASE)
+META_IMAGE_PROPERTY_PATTERN = re.compile(
+    r"(?:property|name)=['\"](?:og:image|twitter:image)['\"]", re.IGNORECASE
+)
+JSON_LD_IMAGE_PATTERN = re.compile(r'"image"\s*:\s*(?:\[\s*)?"([^\"]+)"', re.IGNORECASE)
 
 
 def extract_title(html: str) -> str:
@@ -116,3 +121,21 @@ def infer_availability(html: str) -> str:
     if any(token in lowered for token in ("in stock", "op voorraad", "beschikbaar")):
         return "in_stock"
     return "unknown"
+
+
+def extract_image_url(html: str, page_url: str) -> str | None:
+    normalized_html = _decode_markup_for_structured_price(html)
+
+    for meta_tag_match in META_PRICE_TAG_PATTERN.finditer(normalized_html):
+        tag = meta_tag_match.group(0)
+        if not META_IMAGE_PROPERTY_PATTERN.search(tag):
+            continue
+        content_match = META_CONTENT_PATTERN.search(tag)
+        if content_match and content_match.group(1):
+            return urljoin(page_url, content_match.group(1).strip())
+
+    json_ld_match = JSON_LD_IMAGE_PATTERN.search(normalized_html)
+    if json_ld_match and json_ld_match.group(1):
+        return urljoin(page_url, json_ld_match.group(1).strip())
+
+    return None

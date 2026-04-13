@@ -95,6 +95,8 @@ def _run_check_for_item(
     )
     if result.ok and result.data is not None:
         item.current_price = result.data.current_price
+        if result.data.image_url:
+            item.image_url = result.data.image_url
         item.last_status = "ok"
         item.last_error_kind = None
         item.last_error_message = None

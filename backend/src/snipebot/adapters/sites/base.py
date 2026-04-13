@@ -15,6 +15,7 @@ class ParsedProductData:
     current_price: Decimal
     currency: str
     availability: str
+    image_url: str | None = None
     parser_metadata: str | None = None
 
 

@@ -394,6 +394,10 @@ td {
     width: 100%;
     box-sizing: border-box;
   }
+
+  .product-preview-title {
+    max-width: 100%;
+  }
 }
 
 .compact-table th,
@@ -425,25 +429,90 @@ td {
   gap: 8px;
 }
 
+.product-inline-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.product-inline-preview-body {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.product-preview-title {
+  max-width: 460px;
+}
+
+.product-preview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.product-preview-meta span:not(:last-child)::after {
+  content: "·";
+  margin-left: 6px;
+}
+
+.product-preview-sub {
+  margin-top: 0;
+}
+
 .product-thumb {
-  width: 28px;
-  height: 28px;
+  width: 76px;
+  height: 76px;
   border-radius: 8px;
   overflow: hidden;
   position: relative;
-  flex: 0 0 28px;
+  flex: 0 0 76px;
   border: 1px solid var(--panel-border);
   background: linear-gradient(145deg, #1f6feb, #3b82f6);
 }
 
+.product-thumb-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .product-thumb-large {
-  width: 48px;
-  height: 48px;
-  flex: 0 0 48px;
+  width: 112px;
+  height: 112px;
+  flex: 0 0 112px;
   border-radius: 10px;
 }
 
+.shop-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+  flex: 0 0 48px;
+  border: 1px solid var(--panel-border);
+  background: #0f172a;
+}
+
+.shop-thumb-large {
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
+}
+
 .product-thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 2;
+}
+
+.shop-thumb img {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -460,6 +529,18 @@ td {
   justify-content: center;
   color: #ffffff;
   font-size: 11px;
+  font-weight: 700;
+  z-index: 1;
+}
+
+.shop-thumb-fallback {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 10px;
   font-weight: 700;
   z-index: 1;
 }
@@ -593,11 +674,15 @@ td {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .detail-product-head h2 {
   margin: 0;
+}
+
+.detail-product-head + .product-inline-preview {
+  margin-bottom: 10px;
 }
 
 .days-toggle {

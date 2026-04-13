@@ -8,6 +8,7 @@ export type WatchItem = {
   notes: string | null;
   target_price: number | null;
   site_key: string;
+  image_url: string | null;
   active: boolean;
   current_price: number | null;
   last_checked_at: string | null;
@@ -54,6 +55,7 @@ export type WatchItemPreviewResponse = {
   current_price: number;
   currency: string;
   availability: string;
+  image_url: string | null;
   suggested_label: string;
 };
 
