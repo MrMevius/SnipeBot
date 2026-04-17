@@ -189,6 +189,8 @@ export type WatchlistHealthResponse = {
 export type BackendSettings = {
   notifications_enabled: boolean;
   telegram_enabled: boolean;
+  telegram_bot_token: string;
+  telegram_chat_id: string;
   check_interval_seconds: number;
   playwright_fallback_enabled: boolean;
   playwright_fallback_adapters: string[];
@@ -198,10 +200,25 @@ export type BackendSettings = {
 export type BackendSettingsUpdatePayload = {
   notifications_enabled?: boolean;
   telegram_enabled?: boolean;
+  telegram_bot_token?: string;
+  telegram_chat_id?: string;
   check_interval_seconds?: number;
   playwright_fallback_enabled?: boolean;
   playwright_fallback_adapters?: string[];
   log_level?: string;
+};
+
+export type TelegramTestPayload = {
+  notifications_enabled?: boolean;
+  telegram_enabled?: boolean;
+  telegram_bot_token?: string;
+  telegram_chat_id?: string;
+};
+
+export type TelegramTestResponse = {
+  ok: boolean;
+  detail: string;
+  provider_message_id: string | null;
 };
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -478,6 +495,19 @@ export async function patchSettings(
     body: JSON.stringify(payload),
   });
   return parseResponse<BackendSettings>(response);
+}
+
+export async function testTelegramSettings(
+  payload: TelegramTestPayload,
+): Promise<TelegramTestResponse> {
+  const response = await apiFetch(`${API_BASE_URL}/settings/test-telegram`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<TelegramTestResponse>(response);
 }
 
 export async function fetchWatchlistHealth(): Promise<WatchlistHealthResponse> {

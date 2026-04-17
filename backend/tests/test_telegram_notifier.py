@@ -1,4 +1,6 @@
+from io import BytesIO
 from urllib.parse import parse_qs
+from urllib.error import HTTPError
 
 from snipebot.notifications.models import NotificationMessage
 from snipebot.notifications.telegram import TelegramNotifier
@@ -69,3 +71,22 @@ def test_telegram_notifier_generates_expected_payload(monkeypatch) -> None:
     assert payload["chat_id"] == ["chat-42"]
     assert payload["text"] == ["📉 Price drop\nLine one\nLine two"]
     assert payload["disable_web_page_preview"] == ["true"]
+
+
+def test_telegram_notifier_http_error_returns_telegram_description(monkeypatch) -> None:
+    def _fake_urlopen(request, timeout: int):
+        raise HTTPError(
+            url=request.full_url,
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=BytesIO(b'{"ok":false,"description":"bot was blocked by the user"}'),
+        )
+
+    monkeypatch.setattr("snipebot.notifications.telegram.urlopen", _fake_urlopen)
+    notifier = TelegramNotifier(bot_token="token", chat_id="chat")
+
+    result = notifier.send(NotificationMessage(title="A", body="B"))
+
+    assert result.ok is False
+    assert result.error == "bot was blocked by the user"

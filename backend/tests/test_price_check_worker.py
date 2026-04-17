@@ -5,7 +5,7 @@ from snipebot.adapters.sites.base import AdapterCheckResult, ParsedProductData
 from snipebot.core.config import get_settings
 from snipebot.domain.price_checks import run_due_price_checks
 from snipebot.persistence.db import get_engine, get_session_factory, init_db
-from snipebot.persistence.models import AlertEvent, PriceCheck, WatchItem
+from snipebot.persistence.models import AlertEvent, AppSetting, PriceCheck, WatchItem
 
 
 class _SuccessAdapter:
@@ -59,9 +59,30 @@ class _CollectingNotifier:
         return _Result()
 
 
+class _DisabledNotifier:
+    def send(self, _message):
+        class _Result:
+            ok = False
+            provider_message_id = None
+            error = "notifications_disabled"
+
+        return _Result()
+
+
+class _FailingNotifier:
+    def send(self, _message):
+        class _Result:
+            ok = False
+            provider_message_id = None
+            error = "Forbidden"
+
+        return _Result()
+
+
 def _reset_tables() -> None:
     init_db()
     with get_engine().begin() as connection:
+        connection.exec_driver_sql("DELETE FROM app_settings")
         connection.exec_driver_sql("DELETE FROM alert_events")
         connection.exec_driver_sql("DELETE FROM price_checks")
         connection.exec_driver_sql("DELETE FROM watch_items")
@@ -237,7 +258,8 @@ def test_alerts_are_recorded_and_deduplicated_for_unchanged_state(monkeypatch) -
     )
     notifier = _CollectingNotifier()
     monkeypatch.setattr(
-        "snipebot.domain.price_checks.build_notifier", lambda settings: notifier
+        "snipebot.domain.price_checks.build_notifier",
+        lambda settings, **_kwargs: notifier,
     )
 
     settings = get_settings()
@@ -272,3 +294,193 @@ def test_alerts_are_recorded_and_deduplicated_for_unchanged_state(monkeypatch) -
     assert "Desk lamp [hema]" in notifier.sent_messages[0]
     assert "Old: €25.00 → New: €19.99" in notifier.sent_messages[0]
     assert "https://www.hema.nl/product/1" in notifier.sent_messages[0]
+
+
+def test_db_settings_can_disable_telegram_alert_dispatch(monkeypatch) -> None:
+    _reset_tables()
+    now = datetime.now(UTC)
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        item = WatchItem(
+            owner_id="local",
+            url="https://www.hema.nl/product/1",
+            normalized_url="https://www.hema.nl/product/1",
+            custom_label="Desk lamp",
+            site_key="hema",
+            target_price=Decimal("20.00"),
+            current_price=Decimal("25.00"),
+            active=True,
+            last_status="pending",
+            next_check_at=now,
+        )
+        session.add(item)
+        session.add(AppSetting(key="notifications_enabled", value="true"))
+        session.add(AppSetting(key="telegram_enabled", value="false"))
+        session.commit()
+
+    monkeypatch.setattr(
+        "snipebot.domain.price_checks.get_adapter", lambda _site_key: _SuccessAdapter()
+    )
+    notifier = _CollectingNotifier()
+    monkeypatch.setattr(
+        "snipebot.domain.price_checks.build_notifier",
+        lambda settings, **_kwargs: notifier,
+    )
+
+    settings = get_settings()
+    settings.notifications_enabled = True
+    settings.telegram_enabled = True
+    settings.telegram_bot_token = "token"
+    settings.telegram_chat_id = "chat"
+
+    with session_factory() as session:
+        run_due_price_checks(session, settings)
+
+    with session_factory() as session:
+        alerts = session.query(AlertEvent).all()
+
+    assert len(notifier.sent_messages) == 0
+    assert alerts == []
+
+
+def test_notifications_disabled_result_is_not_persisted_as_failed_event(
+    monkeypatch,
+) -> None:
+    _reset_tables()
+    now = datetime.now(UTC)
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        item = WatchItem(
+            owner_id="local",
+            url="https://www.hema.nl/product/1",
+            normalized_url="https://www.hema.nl/product/1",
+            custom_label="Desk lamp",
+            site_key="hema",
+            target_price=Decimal("20.00"),
+            current_price=Decimal("25.00"),
+            active=True,
+            last_status="pending",
+            next_check_at=now,
+        )
+        session.add(item)
+        session.commit()
+
+    monkeypatch.setattr(
+        "snipebot.domain.price_checks.get_adapter", lambda _site_key: _SuccessAdapter()
+    )
+    monkeypatch.setattr(
+        "snipebot.domain.price_checks.build_notifier",
+        lambda settings, **_kwargs: _DisabledNotifier(),
+    )
+
+    settings = get_settings()
+    settings.notifications_enabled = True
+    settings.telegram_enabled = True
+
+    with session_factory() as session:
+        run_due_price_checks(session, settings)
+
+    with session_factory() as session:
+        alerts = session.query(AlertEvent).all()
+
+    assert alerts == []
+
+
+def test_provider_failure_is_persisted_as_failed_event(monkeypatch) -> None:
+    _reset_tables()
+    now = datetime.now(UTC)
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        item = WatchItem(
+            owner_id="local",
+            url="https://www.hema.nl/product/1",
+            normalized_url="https://www.hema.nl/product/1",
+            custom_label="Desk lamp",
+            site_key="hema",
+            target_price=Decimal("20.00"),
+            current_price=Decimal("25.00"),
+            active=True,
+            last_status="pending",
+            next_check_at=now,
+        )
+        session.add(item)
+        session.commit()
+
+    monkeypatch.setattr(
+        "snipebot.domain.price_checks.get_adapter", lambda _site_key: _SuccessAdapter()
+    )
+    monkeypatch.setattr(
+        "snipebot.domain.price_checks.build_notifier",
+        lambda settings, **_kwargs: _FailingNotifier(),
+    )
+
+    settings = get_settings()
+    settings.notifications_enabled = True
+    settings.telegram_enabled = True
+
+    with session_factory() as session:
+        run_due_price_checks(session, settings)
+
+    with session_factory() as session:
+        alerts = session.query(AlertEvent).order_by(AlertEvent.id.asc()).all()
+
+    assert len(alerts) == 2
+    assert all(alert.delivery_status == "failed" for alert in alerts)
+    assert all(alert.error_message == "Forbidden" for alert in alerts)
+
+
+def test_db_telegram_credentials_override_env_for_runtime_notifier(monkeypatch) -> None:
+    _reset_tables()
+    now = datetime.now(UTC)
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        item = WatchItem(
+            owner_id="local",
+            url="https://www.hema.nl/product/1",
+            normalized_url="https://www.hema.nl/product/1",
+            custom_label="Desk lamp",
+            site_key="hema",
+            target_price=Decimal("20.00"),
+            current_price=Decimal("25.00"),
+            active=True,
+            last_status="pending",
+            next_check_at=now,
+        )
+        session.add(item)
+        session.add(AppSetting(key="notifications_enabled", value="true"))
+        session.add(AppSetting(key="telegram_enabled", value="true"))
+        session.add(AppSetting(key="telegram_bot_token", value="db-token"))
+        session.add(AppSetting(key="telegram_chat_id", value="db-chat"))
+        session.commit()
+
+    monkeypatch.setattr(
+        "snipebot.domain.price_checks.get_adapter", lambda _site_key: _SuccessAdapter()
+    )
+
+    captured: dict[str, str] = {}
+
+    def _capture_build_notifier(_settings, **kwargs):
+        captured["telegram_bot_token"] = kwargs.get("telegram_bot_token")
+        captured["telegram_chat_id"] = kwargs.get("telegram_chat_id")
+        return _DisabledNotifier()
+
+    monkeypatch.setattr(
+        "snipebot.domain.price_checks.build_notifier",
+        _capture_build_notifier,
+    )
+
+    settings = get_settings()
+    settings.notifications_enabled = True
+    settings.telegram_enabled = True
+    settings.telegram_bot_token = "env-token"
+    settings.telegram_chat_id = "env-chat"
+
+    with session_factory() as session:
+        run_due_price_checks(session, settings)
+
+    assert captured["telegram_bot_token"] == "db-token"
+    assert captured["telegram_chat_id"] == "db-chat"

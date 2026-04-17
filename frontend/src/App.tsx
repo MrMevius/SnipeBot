@@ -14,6 +14,7 @@ import {
   previewWatchItemByUrl,
   restoreWatchItem,
   setOwnerId,
+  testTelegramSettings,
   triggerWatchItemCheckNow,
   upsertWatchItem,
   type AlertEvent,
@@ -78,6 +79,16 @@ function isHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isBotIdUsedAsChatId(botToken: string, chatId: string): boolean {
+  const token = botToken.trim();
+  const chat = chatId.trim();
+  if (!token || !chat) {
+    return false;
+  }
+  const [botId] = token.split(":", 1);
+  return Boolean(botId) && chat === botId;
 }
 
 function formatPrice(
@@ -658,6 +669,8 @@ type Route =
 type SettingsFormState = {
   notificationsEnabled: boolean;
   telegramEnabled: boolean;
+  telegramBotToken: string;
+  telegramChatId: string;
   checkIntervalSeconds: string;
   playwrightFallbackEnabled: boolean;
   playwrightFallbackAdapters: string;
@@ -1246,6 +1259,7 @@ export function App() {
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
+  const [settingsTestLoading, setSettingsTestLoading] = useState(false);
   const [settingsForm, setSettingsForm] = useState<SettingsFormState | null>(null);
   const [defaultHistoryDays, setDefaultHistoryDays] = useState<7 | 30 | 90>(
     () => loadUiSettings().defaultHistoryDays,
@@ -1374,6 +1388,8 @@ export function App() {
         setSettingsForm({
           notificationsEnabled: payload.notifications_enabled,
           telegramEnabled: payload.telegram_enabled,
+          telegramBotToken: payload.telegram_bot_token ?? "",
+          telegramChatId: payload.telegram_chat_id ?? "",
           checkIntervalSeconds: String(payload.check_interval_seconds),
           playwrightFallbackEnabled: payload.playwright_fallback_enabled,
           playwrightFallbackAdapters: payload.playwright_fallback_adapters.join(", "),
@@ -1544,10 +1560,17 @@ export function App() {
       return;
     }
 
+    if (isBotIdUsedAsChatId(settingsForm.telegramBotToken, settingsForm.telegramChatId)) {
+      setSettingsError("Telegram chat ID mag niet gelijk zijn aan de bot-id.");
+      return;
+    }
+
     try {
       const payload = await patchSettings({
         notifications_enabled: settingsForm.notificationsEnabled,
         telegram_enabled: settingsForm.telegramEnabled,
+        telegram_bot_token: settingsForm.telegramBotToken.trim(),
+        telegram_chat_id: settingsForm.telegramChatId.trim(),
         check_interval_seconds: parsedCheckInterval,
         playwright_fallback_enabled: settingsForm.playwrightFallbackEnabled,
         playwright_fallback_adapters: settingsForm.playwrightFallbackAdapters
@@ -1560,6 +1583,8 @@ export function App() {
       setSettingsForm({
         notificationsEnabled: payload.notifications_enabled,
         telegramEnabled: payload.telegram_enabled,
+        telegramBotToken: payload.telegram_bot_token ?? "",
+        telegramChatId: payload.telegram_chat_id ?? "",
         checkIntervalSeconds: String(payload.check_interval_seconds),
         playwrightFallbackEnabled: payload.playwright_fallback_enabled,
         playwrightFallbackAdapters: payload.playwright_fallback_adapters.join(", "),
@@ -1569,6 +1594,42 @@ export function App() {
       setSettingsFeedback("Settings saved.");
     } catch (err) {
       setSettingsError((err as Error).message);
+    }
+  }
+
+  async function handleTestTelegram() {
+    setSettingsError(null);
+    setSettingsFeedback(null);
+
+    if (!settingsForm) {
+      setSettingsError("Settings not loaded yet.");
+      return;
+    }
+
+    if (isBotIdUsedAsChatId(settingsForm.telegramBotToken, settingsForm.telegramChatId)) {
+      setSettingsError("Telegram chat ID mag niet gelijk zijn aan de bot-id.");
+      return;
+    }
+
+    setSettingsTestLoading(true);
+    try {
+      const payload = await testTelegramSettings({
+        notifications_enabled: settingsForm.notificationsEnabled,
+        telegram_enabled: settingsForm.telegramEnabled,
+        telegram_bot_token: settingsForm.telegramBotToken.trim(),
+        telegram_chat_id: settingsForm.telegramChatId.trim(),
+      });
+
+      if (!payload.ok) {
+        setSettingsError(`Telegram test mislukt: ${payload.detail}`);
+        return;
+      }
+
+      setSettingsFeedback(payload.detail);
+    } catch (err) {
+      setSettingsError((err as Error).message);
+    } finally {
+      setSettingsTestLoading(false);
     }
   }
 
@@ -1860,6 +1921,27 @@ export function App() {
                 Telegram channel enabled
               </label>
               <label>
+                Telegram bot token
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={settingsForm.telegramBotToken}
+                  onChange={(event) =>
+                    setSettingsFormField("telegramBotToken", event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Telegram chat ID
+                <input
+                  type="text"
+                  value={settingsForm.telegramChatId}
+                  onChange={(event) =>
+                    setSettingsFormField("telegramChatId", event.target.value)
+                  }
+                />
+              </label>
+              <label>
                 Global check interval (seconds)
                 <input
                   type="number"
@@ -1945,6 +2027,16 @@ export function App() {
 
               <div className="actions-row">
                 <button type="submit">Save settings</button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => {
+                    void handleTestTelegram();
+                  }}
+                  disabled={settingsTestLoading}
+                >
+                  {settingsTestLoading ? "Testing…" : "Test Telegram"}
+                </button>
               </div>
 
               <p className="muted">

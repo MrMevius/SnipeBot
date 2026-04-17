@@ -904,6 +904,8 @@ describe("App", () => {
           json: async () => ({
             notifications_enabled: false,
             telegram_enabled: false,
+            telegram_bot_token: "",
+            telegram_chat_id: "",
             check_interval_seconds: 1800,
             playwright_fallback_enabled: false,
             playwright_fallback_adapters: [],
@@ -918,10 +920,23 @@ describe("App", () => {
           json: async () => ({
             notifications_enabled: true,
             telegram_enabled: true,
+            telegram_bot_token: "ui-token",
+            telegram_chat_id: "ui-chat",
             check_interval_seconds: 900,
             playwright_fallback_enabled: true,
             playwright_fallback_adapters: ["amazon_nl"],
             log_level: "DEBUG",
+          }),
+        };
+      }
+
+      if (url.endsWith("/settings/test-telegram") && init?.method === "POST") {
+        return {
+          ok: true,
+          json: async () => ({
+            ok: true,
+            detail: "Telegram testbericht succesvol verzonden.",
+            provider_message_id: "m-42",
           }),
         };
       }
@@ -953,6 +968,14 @@ describe("App", () => {
 
     fireEvent.click(screen.getByLabelText("Notifications enabled"));
     fireEvent.click(screen.getByLabelText("Telegram channel enabled"));
+    fireEvent.change(screen.getByLabelText("Telegram bot token"), {
+      target: { value: "ui-token" },
+    });
+    fireEvent.change(screen.getByLabelText("Telegram chat ID"), {
+      target: { value: "ui-chat" },
+    });
+    fireEvent.click(screen.getByText("Test Telegram"));
+    expect(await screen.findByText("Telegram testbericht succesvol verzonden.")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Global check interval (seconds)"), {
       target: { value: "900" },
     });
@@ -971,6 +994,81 @@ describe("App", () => {
     fireEvent.click(screen.getByText("Save settings"));
 
     expect(await screen.findByText("Settings saved.")).toBeTruthy();
+    const patchCall = fetchMock.mock.calls.find(
+      ([input, init]) => String(input).endsWith("/settings") && init?.method === "PATCH",
+    );
+    expect(patchCall).toBeTruthy();
+    const patchBody = JSON.parse(String(patchCall?.[1]?.body ?? "{}"));
+    expect(patchBody.telegram_bot_token).toBe("ui-token");
+    expect(patchBody.telegram_chat_id).toBe("ui-chat");
+    const testCall = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        String(input).endsWith("/settings/test-telegram") && init?.method === "POST",
+    );
+    expect(testCall).toBeTruthy();
     expect(document.documentElement.classList.contains("theme-dark")).toBe(true);
+  });
+
+  it("blocks bot-id as Telegram chat id in settings UI", async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (/\/watchlist(\?|$)/.test(url)) {
+        return { ok: true, json: async () => ({ items: [], total: 0, limit: 25, offset: 0 }) };
+      }
+
+      if (url.endsWith("/settings") && !init?.method) {
+        return {
+          ok: true,
+          json: async () => ({
+            notifications_enabled: false,
+            telegram_enabled: true,
+            telegram_bot_token: "",
+            telegram_chat_id: "",
+            check_interval_seconds: 1800,
+            playwright_fallback_enabled: false,
+            playwright_fallback_adapters: [],
+            log_level: "INFO",
+          }),
+        };
+      }
+
+      if (url.endsWith("/watchlist/health")) {
+        return {
+          ok: true,
+          json: async () => ({
+            owner_id: "local",
+            total: 0,
+            active: 0,
+            archived: 0,
+            stale: 0,
+            error: 0,
+            dead_lettered: 0,
+          }),
+        };
+      }
+      if (url.endsWith("/watchlist/tags")) {
+        return { ok: true, json: async () => ({ tags: [] }) };
+      }
+
+      throw new Error(`Unexpected URL ${url}`);
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "Settings" }));
+
+    fireEvent.change(screen.getByLabelText("Telegram bot token"), {
+      target: { value: "123456:ABC" },
+    });
+    fireEvent.change(screen.getByLabelText("Telegram chat ID"), {
+      target: { value: "123456" },
+    });
+    fireEvent.click(screen.getByText("Test Telegram"));
+
+    expect(await screen.findByText("Telegram chat ID mag niet gelijk zijn aan de bot-id.")).toBeTruthy();
+    const testCall = fetchMock.mock.calls.find(
+      ([input, init]) => String(input).endsWith("/settings/test-telegram") && init?.method === "POST",
+    );
+    expect(testCall).toBeUndefined();
   });
 });

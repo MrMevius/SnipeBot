@@ -15,6 +15,8 @@ ALLOWED_CURRENCY_DISPLAY_MODES = {"symbol", "code"}
 class BackendSettings:
     notifications_enabled: bool
     telegram_enabled: bool
+    telegram_bot_token: str
+    telegram_chat_id: str
     check_interval_seconds: int
     playwright_fallback_enabled: bool
     playwright_fallback_adapters: list[str]
@@ -31,6 +33,12 @@ def get_backend_settings(db_session: Session) -> BackendSettings:
         ),
         telegram_enabled=_as_bool(
             values.get("telegram_enabled"), defaults.telegram_enabled
+        ),
+        telegram_bot_token=_as_str(
+            values.get("telegram_bot_token"), defaults.telegram_bot_token
+        ),
+        telegram_chat_id=_as_str(
+            values.get("telegram_chat_id"), defaults.telegram_chat_id
         ),
         check_interval_seconds=_as_int(
             values.get("check_interval_seconds"), defaults.check_interval_seconds
@@ -52,11 +60,31 @@ def update_backend_settings(
     *,
     notifications_enabled: bool | None = None,
     telegram_enabled: bool | None = None,
+    telegram_bot_token: str | None = None,
+    telegram_chat_id: str | None = None,
     check_interval_seconds: int | None = None,
     playwright_fallback_enabled: bool | None = None,
     playwright_fallback_adapters: list[str] | None = None,
     log_level: str | None = None,
 ) -> BackendSettings:
+    current = get_backend_settings(db_session)
+
+    effective_telegram_bot_token = (
+        telegram_bot_token.strip()
+        if telegram_bot_token is not None
+        else current.telegram_bot_token
+    )
+    effective_telegram_chat_id = (
+        telegram_chat_id.strip()
+        if telegram_chat_id is not None
+        else current.telegram_chat_id
+    )
+
+    if is_bot_chat_id(effective_telegram_bot_token, effective_telegram_chat_id):
+        raise ValueError(
+            "telegram_chat_id may not be the bot id; use a user/group/channel chat id"
+        )
+
     if notifications_enabled is not None:
         _set_setting(
             db_session, "notifications_enabled", _to_bool_str(notifications_enabled)
@@ -64,6 +92,12 @@ def update_backend_settings(
 
     if telegram_enabled is not None:
         _set_setting(db_session, "telegram_enabled", _to_bool_str(telegram_enabled))
+
+    if telegram_bot_token is not None:
+        _set_setting(db_session, "telegram_bot_token", telegram_bot_token.strip())
+
+    if telegram_chat_id is not None:
+        _set_setting(db_session, "telegram_chat_id", telegram_chat_id.strip())
 
     if check_interval_seconds is not None:
         if check_interval_seconds < 30 or check_interval_seconds > 86400:
@@ -128,6 +162,12 @@ def _as_int(raw: str | None, default: int) -> int:
         return default
 
 
+def _as_str(raw: str | None, default: str) -> str:
+    if raw is None:
+        return default
+    return raw
+
+
 def _as_csv_list(raw: str | None, default: str) -> list[str]:
     source = raw if raw is not None else default
     return [entry.strip() for entry in source.split(",") if entry.strip()]
@@ -142,3 +182,13 @@ def _as_log_level(raw: str | None, default: str) -> str:
 
 def _to_bool_str(value: bool) -> str:
     return "true" if value else "false"
+
+
+def is_bot_chat_id(bot_token: str, chat_id: str) -> bool:
+    token = (bot_token or "").strip()
+    chat = (chat_id or "").strip()
+    if not token or not chat:
+        return False
+
+    bot_id = token.split(":", maxsplit=1)[0].strip()
+    return bool(bot_id and chat == bot_id)

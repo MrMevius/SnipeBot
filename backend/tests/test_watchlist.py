@@ -885,6 +885,8 @@ def test_settings_get_defaults_and_patch_persists() -> None:
         is runtime_defaults.notifications_enabled
     )
     assert defaults_payload["telegram_enabled"] is runtime_defaults.telegram_enabled
+    assert defaults_payload["telegram_bot_token"] == runtime_defaults.telegram_bot_token
+    assert defaults_payload["telegram_chat_id"] == runtime_defaults.telegram_chat_id
     assert (
         defaults_payload["check_interval_seconds"]
         == runtime_defaults.check_interval_seconds
@@ -905,6 +907,8 @@ def test_settings_get_defaults_and_patch_persists() -> None:
         json={
             "notifications_enabled": True,
             "telegram_enabled": True,
+            "telegram_bot_token": "token-from-ui",
+            "telegram_chat_id": "chat-from-ui",
             "check_interval_seconds": 900,
             "playwright_fallback_enabled": True,
             "playwright_fallback_adapters": ["amazon_nl", "hema"],
@@ -915,6 +919,8 @@ def test_settings_get_defaults_and_patch_persists() -> None:
     patched_payload = patched.json()
     assert patched_payload["notifications_enabled"] is True
     assert patched_payload["telegram_enabled"] is True
+    assert patched_payload["telegram_bot_token"] == "token-from-ui"
+    assert patched_payload["telegram_chat_id"] == "chat-from-ui"
     assert patched_payload["check_interval_seconds"] == 900
     assert patched_payload["playwright_fallback_enabled"] is True
     assert patched_payload["playwright_fallback_adapters"] == ["amazon_nl", "hema"]
@@ -933,3 +939,134 @@ def test_settings_patch_rejects_invalid_log_level() -> None:
 
     assert response.status_code == 422
     assert "log_level must be one of" in response.json()["detail"]
+
+
+def test_settings_patch_rejects_bot_id_as_chat_id() -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    response = client.patch(
+        "/settings",
+        json={
+            "telegram_bot_token": "123456:ABC",
+            "telegram_chat_id": "123456",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "telegram_chat_id may not be the bot id" in response.json()["detail"]
+
+
+def test_settings_test_telegram_endpoint_reports_success(monkeypatch) -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    captured: dict[str, object] = {}
+
+    class _Notifier:
+        def send(self, message):
+            captured["text"] = message.text
+
+            class _Result:
+                ok = True
+                provider_message_id = "m-123"
+                error = None
+
+            return _Result()
+
+    def _fake_build_notifier(_settings, **kwargs):
+        captured.update(kwargs)
+        return _Notifier()
+
+    monkeypatch.setattr("snipebot.api.settings.build_notifier", _fake_build_notifier)
+
+    response = client.post(
+        "/settings/test-telegram",
+        json={
+            "notifications_enabled": True,
+            "telegram_enabled": True,
+            "telegram_bot_token": "token-ui",
+            "telegram_chat_id": "chat-ui",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["provider_message_id"] == "m-123"
+    assert captured["notifications_enabled"] is True
+    assert captured["telegram_enabled"] is True
+    assert captured["telegram_bot_token"] == "token-ui"
+    assert captured["telegram_chat_id"] == "chat-ui"
+    assert "SnipeBot test" in str(captured["text"])
+
+
+def test_settings_test_telegram_endpoint_reports_error(monkeypatch) -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    class _Notifier:
+        def send(self, _message):
+            class _Result:
+                ok = False
+                provider_message_id = None
+                error = "notifications_disabled"
+
+            return _Result()
+
+    monkeypatch.setattr(
+        "snipebot.api.settings.build_notifier",
+        lambda _settings, **_kwargs: _Notifier(),
+    )
+
+    response = client.post(
+        "/settings/test-telegram",
+        json={
+            "notifications_enabled": False,
+            "telegram_enabled": True,
+            "telegram_bot_token": "token-ui",
+            "telegram_chat_id": "chat-ui",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["detail"] == "notifications_disabled"
+
+
+def test_settings_test_telegram_endpoint_rejects_bot_id_as_chat_id(monkeypatch) -> None:
+    _reset_watch_items()
+    client = TestClient(app)
+
+    called = {"value": False}
+
+    class _Notifier:
+        def send(self, _message):
+            called["value"] = True
+
+            class _Result:
+                ok = True
+                provider_message_id = "msg"
+                error = None
+
+            return _Result()
+
+    monkeypatch.setattr(
+        "snipebot.api.settings.build_notifier",
+        lambda _settings, **_kwargs: _Notifier(),
+    )
+
+    response = client.post(
+        "/settings/test-telegram",
+        json={
+            "telegram_bot_token": "123456:ABC",
+            "telegram_chat_id": "123456",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is False
+    assert "telegram_chat_id may not be the bot id" in payload["detail"]
+    assert called["value"] is False

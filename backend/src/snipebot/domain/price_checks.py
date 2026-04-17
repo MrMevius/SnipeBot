@@ -11,7 +11,7 @@ from snipebot.core.config import Settings
 from snipebot.core.metrics import metrics
 from snipebot.domain.alerts import AlertContext, decide_alerts, format_alert_message
 from snipebot.notifications.factory import build_notifier
-from snipebot.persistence.models import AlertEvent, PriceCheck, WatchItem
+from snipebot.persistence.models import AlertEvent, AppSetting, PriceCheck, WatchItem
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +19,33 @@ logger = logging.getLogger(__name__)
 def run_due_price_checks(db_session: Session, settings: Settings) -> int:
     items = _get_due_items(db_session, settings.worker_batch_size)
     processed = 0
-    notifier = build_notifier(settings)
+    (
+        notifications_enabled,
+        telegram_enabled,
+        telegram_bot_token,
+        telegram_chat_id,
+    ) = _resolve_notification_settings(db_session, settings)
+    notifier = build_notifier(
+        settings,
+        notifications_enabled=notifications_enabled,
+        telegram_enabled=telegram_enabled,
+        telegram_bot_token=telegram_bot_token,
+        telegram_chat_id=telegram_chat_id,
+    )
+    alerts_enabled = notifications_enabled and telegram_enabled
     metrics.inc("checks.batch_runs")
     metrics.inc("checks.items_loaded", len(items))
 
     for item in items:
         processed += 1
         try:
-            _run_check_for_item(db_session, item, settings, notifier=notifier)
+            _run_check_for_item(
+                db_session,
+                item,
+                settings,
+                notifier=notifier,
+                alerts_enabled=alerts_enabled,
+            )
             db_session.commit()
             metrics.inc("checks.item_processed")
         except Exception as exc:  # pragma: no cover - safety net
@@ -63,6 +82,7 @@ def _run_check_for_item(
     settings: Settings,
     *,
     notifier,
+    alerts_enabled: bool,
 ) -> None:
     checked_at = datetime.now(UTC)
     item.last_checked_at = checked_at
@@ -130,7 +150,7 @@ def _run_check_for_item(
             check=check,
             checked_at=checked_at,
             previous_successful_price=previous_successful_price,
-            settings=settings,
+            alerts_enabled=alerts_enabled,
             notifier=notifier,
         )
         logger.info(
@@ -238,7 +258,7 @@ def _dispatch_alerts_for_success(
     check: PriceCheck,
     checked_at: datetime,
     previous_successful_price,
-    settings: Settings,
+    alerts_enabled: bool,
     notifier,
 ) -> None:
     intents = decide_alerts(
@@ -249,7 +269,7 @@ def _dispatch_alerts_for_success(
     if not intents:
         return
 
-    if not settings.notifications_enabled:
+    if not alerts_enabled:
         return
 
     context = AlertContext(
@@ -283,6 +303,16 @@ def _dispatch_alerts_for_success(
         message = format_alert_message(intent, context)
 
         response = notifier.send(message)
+
+        if not response.ok and response.error == "notifications_disabled":
+            logger.info(
+                "alert.skipped watch_item_id=%s alert_kind=%s reason=%s",
+                item.id,
+                intent.kind,
+                response.error,
+            )
+            continue
+
         delivery_status = "sent" if response.ok else "failed"
         provider_message_id = response.provider_message_id
         error_message = None if response.ok else response.error
@@ -322,3 +352,51 @@ def _dispatch_alerts_for_success(
                 intent.kind,
                 error_message,
             )
+
+
+def _resolve_notification_settings(
+    db_session: Session, settings: Settings
+) -> tuple[bool, bool, str, str]:
+    values = {
+        row[0]: row[1]
+        for row in db_session.execute(
+            select(AppSetting.key, AppSetting.value).where(
+                AppSetting.key.in_(
+                    (
+                        "notifications_enabled",
+                        "telegram_enabled",
+                        "telegram_bot_token",
+                        "telegram_chat_id",
+                    )
+                )
+            )
+        ).all()
+    }
+
+    notifications_enabled = _as_bool_setting(
+        values.get("notifications_enabled"), settings.notifications_enabled
+    )
+    telegram_enabled = _as_bool_setting(
+        values.get("telegram_enabled"), settings.telegram_enabled
+    )
+    telegram_bot_token = _as_str_setting(
+        values.get("telegram_bot_token"), settings.telegram_bot_token
+    )
+    telegram_chat_id = _as_str_setting(
+        values.get("telegram_chat_id"), settings.telegram_chat_id
+    )
+    return notifications_enabled, telegram_enabled, telegram_bot_token, telegram_chat_id
+
+
+def _as_bool_setting(raw: str | None, default: bool) -> bool:
+    if raw is None:
+        return default
+    return raw.lower() in {"1", "true", "yes", "on"}
+
+
+def _as_str_setting(raw: str | None, default: str) -> str:
+    if raw is None:
+        return default
+    if raw.strip() == "":
+        return default
+    return raw

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -32,6 +33,23 @@ class TelegramNotifier(Notifier):
         try:
             with urlopen(request, timeout=15) as response:
                 body = response.read().decode("utf-8", errors="ignore")
+        except HTTPError as exc:  # pragma: no cover - network safety
+            response_body = ""
+            try:
+                response_body = exc.read().decode("utf-8", errors="ignore")
+            except Exception:
+                response_body = ""
+
+            if response_body:
+                try:
+                    decoded = json.loads(response_body)
+                    description = decoded.get("description")
+                    if description:
+                        return NotificationResult(ok=False, error=str(description))
+                except json.JSONDecodeError:
+                    pass
+
+            return NotificationResult(ok=False, error=f"telegram_http_error_{exc.code}")
         except Exception as exc:  # pragma: no cover - network safety
             return NotificationResult(ok=False, error=str(exc))
 
