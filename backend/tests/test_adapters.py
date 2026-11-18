@@ -7,6 +7,7 @@ from snipebot.adapters.sites.aliexpress import AliExpressAdapter
 from snipebot.adapters.sites.amazon_nl import AmazonNlAdapter
 from snipebot.adapters.sites.base import ParsedProductData, SiteAdapter
 from snipebot.adapters.sites.hema import HemaAdapter
+from snipebot.adapters.sites.registry import detect_site_key, get_adapter
 from snipebot.adapters.sites.parsing import (
     extract_image_url,
     extract_price,
@@ -189,3 +190,34 @@ def test_adapter_fallback_runs_only_when_enabled() -> None:
     assert with_fallback.used_fallback is True
     assert with_fallback.data is not None
     assert with_fallback.data.current_price == Decimal("10.00")
+
+
+@pytest.mark.parametrize(
+    ("availability", "expected"),
+    [("OnlineOnly", "in_stock"), ("https://schema.org/OutOfStock", "out_of_stock")],
+)
+def test_lidl_adapter_reads_the_product_offer(availability: str, expected: str) -> None:
+    url = "https://www.lidl.nl/p/tool/p800014345"
+    adapter = get_adapter(detect_site_key(url))
+    assert adapter is not None
+    html = f"""
+    <script>const recommendation = {{"price": 9.99}};</script>
+    <script type="application/ld+json">
+      {{"@type":"Product","name":"PARKSIDE drill","image":["/assets/drill.jpg"],
+        "offers":[{{"@type":"Offer","price":85.99,"priceCurrency":"EUR",
+                    "availability":"{availability}"}}]}}
+    </script>
+    """
+    parsed = adapter.parse_html(url, html)
+    assert parsed.title == "PARKSIDE drill"
+    assert parsed.current_price == Decimal("85.99")
+    assert parsed.currency == "EUR"
+    assert parsed.availability == expected
+    assert parsed.image_url == "https://www.lidl.nl/assets/drill.jpg"
+
+
+def test_lidl_adapter_rejects_pages_without_product_data() -> None:
+    adapter = get_adapter("lidl_nl")
+    assert adapter is not None
+    with pytest.raises(ValueError, match="Could not find Lidl product data"):
+        adapter.parse_html("https://www.lidl.nl/", "<title>Lidl</title><p>Delivery from € 4,99</p>")

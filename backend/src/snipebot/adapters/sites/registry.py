@@ -4,11 +4,13 @@ from snipebot.adapters.sites.aliexpress import AliExpressAdapter
 from snipebot.adapters.sites.amazon_nl import AmazonNlAdapter
 from snipebot.adapters.sites.base import SiteAdapter
 from snipebot.adapters.sites.hema import HemaAdapter
+from snipebot.adapters.sites.lidl_nl import LidlNlAdapter
 
 _ADAPTERS: dict[str, SiteAdapter] = {
     "hema": HemaAdapter(),
     "amazon_nl": AmazonNlAdapter(),
     "aliexpress": AliExpressAdapter(),
+    "lidl_nl": LidlNlAdapter(),
 }
 
 
@@ -21,6 +23,9 @@ def detect_site_key(url: str) -> str:
         return "amazon_nl"
     if host.endswith("aliexpress.com"):
         return "aliexpress"
+
+    if _ADAPTERS["lidl_nl"].supports(url):
+        return "lidl_nl"
 
     return "unknown"
 

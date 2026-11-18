@@ -745,6 +745,16 @@ const SUPPORTED_WEBSHOPS: SupportedWebshop[] = [
       "Klik Add to watchlist en stel desgewenst direct een target in.",
     ],
   },
+  {
+    siteKey: "lidl_nl",
+    label: "Lidl NL",
+    domain: "lidl.nl",
+    instructions: [
+      "Open de productpagina op lidl.nl en kopieer de product-URL.",
+      "Plak de URL in Add product en controleer de preview.",
+      "Sla het product op in je watchlist.",
+    ],
+  },
 ];
 
 const SORT_BY_COLUMN: Record<SortableColumn, { asc: SortOption; desc: SortOption }> = {

@@ -116,6 +116,7 @@ describe("App", () => {
     expect(screen.getByTestId("shop-card-hema")).toBeTruthy();
     expect(screen.getByTestId("shop-card-amazon_nl")).toBeTruthy();
     expect(screen.getByTestId("shop-card-aliexpress")).toBeTruthy();
+    expect(screen.getByTestId("shop-card-lidl_nl")).toBeTruthy();
     expect(screen.getByText("Open het product op hema.nl en kopieer de volledige product-URL.")).toBeTruthy();
   });
 
