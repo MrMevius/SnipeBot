@@ -1,7 +1,8 @@
 import json
 import re
+import subprocess
 from decimal import Decimal, InvalidOperation
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from snipebot.adapters.sites.base import ParsedProductData, SiteAdapter
 
@@ -24,6 +25,36 @@ class LidlNlAdapter(SiteAdapter):
 
     def supports(self, url: str) -> bool:
         return self.host_from_url(url) in {"lidl.nl", "www.lidl.nl"}
+
+    def _fetch_html(self, url: str) -> str:
+        if not self.supports(url):
+            raise ValueError("Expected a Lidl Netherlands URL")
+
+        # Use the canonical HTTPS host without following redirects.
+        product_url = urlsplit(url)._replace(scheme="https", netloc="www.lidl.nl").geturl()
+        try:
+            result = subprocess.run(
+                [
+                    "curl", "--disable", "--globoff", "--fail", "--silent", "--show-error",
+                    "--http1.1", "--max-time", "15",
+                    "--user-agent", "Mozilla/5.0 (X11; Linux x86_64) SnipeBot/0.1",
+                    "--header", "Accept: text/html,application/xhtml+xml",
+                    "--url", product_url,
+                ],
+                capture_output=True,
+                check=False,
+                encoding="utf-8",
+                errors="replace",
+                timeout=16,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError("Lidl request timed out") from exc
+
+        if result.returncode == 28:
+            raise TimeoutError("Lidl request timed out")
+        if result.returncode:
+            raise OSError(result.stderr.strip() or f"Lidl request failed (curl {result.returncode})")
+        return result.stdout
 
     def parse_html(self, url: str, html: str) -> ParsedProductData:
         for match in _JSON_LD.finditer(html):

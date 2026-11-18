@@ -17,6 +17,7 @@ SnipeBot is a self-hosted price-tracking application with a Docker-first runtime
 Optional for local non-Docker development:
 - Python `>=3.12`
 - Node.js + npm
+- curl for Lidl Netherlands product checks
 
 ## Quick start (Docker)
 
