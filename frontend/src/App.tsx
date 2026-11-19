@@ -2088,9 +2088,9 @@ export function App() {
 
       {menuView === "watchlist" ? (
         <>
-          <section className="panel">
+          <section className="panel watchlist-panel">
             <h2>Watchlist Overview</h2>
-            <div className="filter-grid">
+            <div className="watchlist-toolbar">
               <label className="inline-field">
                 <span>Search</span>
                 <input
@@ -2111,15 +2111,13 @@ export function App() {
                   <option value="no">Inactive</option>
                 </select>
               </label>
-            </div>
-
-            <div className="actions-row compact-actions-row">
-              <label className="inline-field small-inline-field">
+              <div className="inline-field">
                 <span>Density</span>
                 <div className="density-toggle" role="group" aria-label="Row density">
                   <button
                     type="button"
                     className={rowDensity === "compact" ? "pill active" : "pill"}
+                    aria-pressed={rowDensity === "compact"}
                     onClick={() => setRowDensity("compact")}
                   >
                     Compact
@@ -2127,20 +2125,14 @@ export function App() {
                   <button
                     type="button"
                     className={rowDensity === "comfortable" ? "pill active" : "pill"}
+                    aria-pressed={rowDensity === "comfortable"}
                     onClick={() => setRowDensity("comfortable")}
                   >
                     Comfortable
                   </button>
                 </div>
-              </label>
-              <span className="muted compact-count">Showing {items.length} of {total}</span>
-            </div>
-
-            {error && <p className="error">{error}</p>}
-            {feedback && <p className="success">{feedback}</p>}
-
-            <div className="actions-row compact-actions-row">
-              <label className="inline-field small-inline-field">
+              </div>
+              <label className="inline-field">
                 <span>Bulk</span>
                 <select
                   value={bulkAction}
@@ -2153,7 +2145,7 @@ export function App() {
                 </select>
               </label>
               {bulkAction === "set_target" ? (
-                <label className="inline-field small-inline-field">
+                <label className="inline-field">
                   <span>Target</span>
                   <input
                     type="number"
@@ -2175,123 +2167,129 @@ export function App() {
               >
                 {bulkWorking ? "Applying..." : `Apply (${selectedItemIds.length})`}
               </button>
+              <span className="muted compact-count">Showing {items.length} of {total}</span>
             </div>
+
+            {error && <p className="error">{error}</p>}
+            {feedback && <p className="success">{feedback}</p>}
 
             {items.length === 0 ? (
               <p>No watched items yet.</p>
             ) : (
-              <table className={`compact-table density-${rowDensity}`}>
-                <thead>
-                  <tr>
-                    <th>
-                      <input
-                        type="checkbox"
-                        checked={allOnPageSelected}
-                        onChange={(event) => toggleSelectedPage(event.target.checked)}
-                        aria-label="Select all on page"
-                      />
-                    </th>
-                    <th className="product-col">
-                      <button type="button" className="sort-button" onClick={() => handleSortByColumn("product")}>
-                        Product <span className="sort-indicator">{sortLabel("product")}</span>
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" className="sort-button" onClick={() => handleSortByColumn("site")}>
-                        Site <span className="sort-indicator">{sortLabel("site")}</span>
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" className="sort-button" onClick={() => handleSortByColumn("target")}>
-                        Target <span className="sort-indicator">{sortLabel("target")}</span>
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" className="sort-button" onClick={() => handleSortByColumn("current")}>
-                        Current <span className="sort-indicator">{sortLabel("current")}</span>
-                      </button>
-                    </th>
-                    <th>
-                      <button type="button" className="sort-button" onClick={() => handleSortByColumn("status")}>
-                        Status <span className="sort-indicator">{sortLabel("status")}</span>
-                      </button>
-                    </th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item) => (
-                    <tr key={item.id}>
-                      <td>
+              <div className="watchlist-table-scroll" role="region" aria-label="Watched products" tabIndex={0}>
+                <table className={`compact-table density-${rowDensity}`}>
+                  <thead>
+                    <tr>
+                      <th>
                         <input
                           type="checkbox"
-                          checked={selectedItemIds.includes(item.id)}
-                          onChange={() => toggleSelected(item.id)}
-                          aria-label={`Select item ${item.id}`}
+                          checked={allOnPageSelected}
+                          onChange={(event) => toggleSelectedPage(event.target.checked)}
+                          aria-label="Select all on page"
                         />
-                      </td>
-                      <td className="product-col">
-                        <ProductInlinePreview
-                          item={item}
-                          currencyDisplayMode={currencyDisplayMode}
-                          thumbnailTestId={`thumbnail-${item.id}`}
-                          testId={`watchlist-preview-${item.id}`}
-                          linkHref={`/products/${item.id}`}
-                          onLinkClick={(event) => {
-                            event.preventDefault();
-                            navigate(`/products/${item.id}`);
-                          }}
-                        />
-                      </td>
-                      <td>{item.site_key}</td>
-                      <td>{formatPrice(item.target_price, currencyDisplayMode)}</td>
-                      <td>{formatPrice(item.current_price, currencyDisplayMode)}</td>
-                      <td>
-                        {(() => {
-                          const meta = getStatusMeta(item.last_status);
-                          const expanded = statusContextItemId === item.id;
-                          return (
-                            <div className="status-cell">
-                              <button
-                                type="button"
-                                className={`status-badge status-${meta.tone}`}
-                                data-testid={`status-badge-${item.id}`}
-                                aria-expanded={expanded}
-                                aria-controls={`status-context-${item.id}`}
-                                onClick={() => {
-                                  setStatusContextItemId((previous) => (previous === item.id ? null : item.id));
-                                }}
-                              >
-                                {meta.label}
-                              </button>
-                              <span className="muted compact-cell-sub">{formatRelativeTime(item.last_checked_at)}</span>
-                              {expanded ? (
-                                <div id={`status-context-${item.id}`} className="status-context" role="status">
-                                  <strong>{meta.label}</strong>
-                                  <span>{meta.description}</span>
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td>
-                        <div className="row-actions row-actions-compact">
-                          <button
-                            type="button"
-                            className="secondary compact-button"
-                            onClick={() => {
-                              void handleArchiveToggle(item);
-                            }}
-                          >
-                            {item.archived_at ? "Restore" : "Archive"}
-                          </button>
-                        </div>
-                      </td>
+                      </th>
+                      <th className="product-col">
+                        <button type="button" className="sort-button" onClick={() => handleSortByColumn("product")}>
+                          Product <span className="sort-indicator">{sortLabel("product")}</span>
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" className="sort-button" onClick={() => handleSortByColumn("site")}>
+                          Site <span className="sort-indicator">{sortLabel("site")}</span>
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" className="sort-button" onClick={() => handleSortByColumn("target")}>
+                          Target <span className="sort-indicator">{sortLabel("target")}</span>
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" className="sort-button" onClick={() => handleSortByColumn("current")}>
+                          Current <span className="sort-indicator">{sortLabel("current")}</span>
+                        </button>
+                      </th>
+                      <th>
+                        <button type="button" className="sort-button" onClick={() => handleSortByColumn("status")}>
+                          Status <span className="sort-indicator">{sortLabel("status")}</span>
+                        </button>
+                      </th>
+                      <th>Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {items.map((item) => (
+                      <tr key={item.id}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedItemIds.includes(item.id)}
+                            onChange={() => toggleSelected(item.id)}
+                            aria-label={`Select item ${item.id}`}
+                          />
+                        </td>
+                        <td className="product-col">
+                          <ProductInlinePreview
+                            item={item}
+                            currencyDisplayMode={currencyDisplayMode}
+                            thumbnailTestId={`thumbnail-${item.id}`}
+                            testId={`watchlist-preview-${item.id}`}
+                            linkHref={`/products/${item.id}`}
+                            onLinkClick={(event) => {
+                              event.preventDefault();
+                              navigate(`/products/${item.id}`);
+                            }}
+                          />
+                        </td>
+                        <td>{item.site_key}</td>
+                        <td>{formatPrice(item.target_price, currencyDisplayMode)}</td>
+                        <td>{formatPrice(item.current_price, currencyDisplayMode)}</td>
+                        <td>
+                          {(() => {
+                            const meta = getStatusMeta(item.last_status);
+                            const expanded = statusContextItemId === item.id;
+                            return (
+                              <div className="status-cell">
+                                <button
+                                  type="button"
+                                  className={`status-badge status-${meta.tone}`}
+                                  data-testid={`status-badge-${item.id}`}
+                                  aria-expanded={expanded}
+                                  aria-controls={`status-context-${item.id}`}
+                                  onClick={() => {
+                                    setStatusContextItemId((previous) => (previous === item.id ? null : item.id));
+                                  }}
+                                >
+                                  {meta.label}
+                                </button>
+                                <span className="muted compact-cell-sub">{formatRelativeTime(item.last_checked_at)}</span>
+                                {expanded ? (
+                                  <div id={`status-context-${item.id}`} className="status-context" role="status">
+                                    <strong>{meta.label}</strong>
+                                    <span>{meta.description}</span>
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        <td>
+                          <div className="row-actions row-actions-compact">
+                            <button
+                              type="button"
+                              className="secondary compact-button"
+                              onClick={() => {
+                                void handleArchiveToggle(item);
+                              }}
+                            >
+                              {item.archived_at ? "Restore" : "Archive"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
 
             <div className="actions-row compact-actions-row">
