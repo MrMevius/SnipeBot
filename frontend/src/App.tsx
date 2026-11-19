@@ -2291,6 +2291,15 @@ export function App() {
                         </td>
                         <td>
                           <div className="row-actions row-actions-compact">
+                            <a
+                              className="compact-button shop-link"
+                              href={item.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label="Open product on webshop (opens in a new tab)"
+                            >
+                              Shop <span aria-hidden="true">↗</span>
+                            </a>
                             <button
                               type="button"
                               className="secondary compact-button"

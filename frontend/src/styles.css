@@ -649,6 +649,11 @@ td {
   line-height: 1.1;
 }
 
+.shop-link {
+  align-self: center;
+  white-space: nowrap;
+}
+
 .compact-cell-sub {
   display: block;
   margin-top: 2px;

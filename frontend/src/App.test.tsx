@@ -100,7 +100,11 @@ describe("App", () => {
     render(<App />);
     expect(screen.getByRole("navigation", { name: "Hoofdnavigatie" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Watchlist" }).getAttribute("aria-current")).toBe("page");
-    expect(await screen.findByText("Lamp")).toBeTruthy();
+    const productLink = await screen.findByRole("link", { name: "Lamp" });
+    expect(productLink.getAttribute("href")).toBe("/products/1");
+    const shopLink = screen.getByRole("link", { name: /Open product on webshop/ });
+    expect(shopLink.getAttribute("href")).toBe("https://hema.nl/product/1");
+    expect(shopLink.getAttribute("target")).toBe("_blank");
     expect(screen.getByRole("columnheader", { name: "First price" })).toBeTruthy();
     expect(screen.getByRole("cell", { name: "€ 25.00" })).toBeTruthy();
     expect(screen.getByRole("cell", { name: "-28%" })).toBeTruthy();
