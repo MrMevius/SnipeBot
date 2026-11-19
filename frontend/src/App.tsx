@@ -2233,7 +2233,13 @@ export function App() {
                   </thead>
                   <tbody>
                     {items.map((item) => (
-                      <tr key={item.id}>
+                      <tr
+                        key={item.id}
+                        data-price-drop={
+                          item.current_price != null && item.first_price != null &&
+                          item.current_price < item.first_price ? true : undefined
+                        }
+                      >
                         <td>
                           <input
                             type="checkbox"
@@ -2257,9 +2263,9 @@ export function App() {
                         </td>
                         <td>{item.site_key}</td>
                         <td>{formatPrice(item.target_price, currencyDisplayMode)}</td>
-                        <td>{formatPrice(item.current_price, currencyDisplayMode)}</td>
+                        <td className="watchlist-price watchlist-price-comparison">{formatPrice(item.current_price, currencyDisplayMode)}</td>
                         <td className="watchlist-price">{formatPrice(item.first_price, currencyDisplayMode)}</td>
-                        <td className="watchlist-price">{formatPriceChange(item.first_price, item.current_price)}</td>
+                        <td className="watchlist-price watchlist-price-comparison">{formatPriceChange(item.first_price, item.current_price)}</td>
                         <td>
                           {(() => {
                             const meta = getStatusMeta(item.last_status);

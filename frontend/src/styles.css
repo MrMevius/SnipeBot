@@ -180,6 +180,12 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+[data-price-drop] .watchlist-price-comparison {
+  background: rgba(6, 118, 71, 0.24);
+  color: #75e0a7;
+  font-weight: 700;
+}
+
 .watchlist-table-scroll:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;

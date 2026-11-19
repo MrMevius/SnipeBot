@@ -107,7 +107,7 @@ describe("App", () => {
     expect(shopLink.getAttribute("target")).toBe("_blank");
     expect(screen.getByRole("columnheader", { name: "First price" })).toBeTruthy();
     expect(screen.getByRole("cell", { name: "€ 25.00" })).toBeTruthy();
-    expect(screen.getByRole("cell", { name: "-28%" })).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "-28%" }).closest("tr")?.getAttribute("data-price-drop")).toBe("true");
     expect(screen.getByTestId("watchlist-preview-1")).toBeTruthy();
     expect(screen.getByTestId("thumbnail-1")).toBeTruthy();
     expect(screen.getAllByText("hema").length).toBeGreaterThan(0);
