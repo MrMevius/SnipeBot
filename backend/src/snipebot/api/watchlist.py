@@ -58,6 +58,7 @@ class WatchItemResponse(BaseModel):
     image_url: str | None
     active: bool
     current_price: float | None
+    first_price: float | None
     last_checked_at: datetime | None
     last_status: str
     archived_at: datetime | None
@@ -230,6 +231,7 @@ def _to_response(item: WatchItem) -> WatchItemResponse:
         image_url=item.image_url,
         active=item.active,
         current_price=_money_to_float(item.current_price),
+        first_price=_money_to_float(item.first_price),
         last_checked_at=item.last_checked_at,
         last_status=item.last_status,
         archived_at=item.archived_at,

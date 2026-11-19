@@ -178,6 +178,7 @@ def test_worker_persists_price_history_and_latest_snapshot(monkeypatch) -> None:
     assert checks[0].current_price == Decimal("19.99")
     assert checks[0].title == "Desk lamp"
     assert checks[0].currency == "EUR"
+    assert item.first_price == Decimal("19.99")
 
 
 def test_failed_check_keeps_latest_price_and_stores_failure_history(

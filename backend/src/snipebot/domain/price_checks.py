@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from snipebot.adapters.sites.registry import get_adapter
@@ -114,6 +114,8 @@ def _run_check_for_item(
         item.normalized_url, allow_playwright_fallback=fallback_allowed
     )
     if result.ok and result.data is not None:
+        if item.successful_check_count == 0 and previous_successful_price is None:
+            item.first_price = func.coalesce(WatchItem.first_price, result.data.current_price)
         item.current_price = result.data.current_price
         if result.data.image_url:
             item.image_url = result.data.image_url

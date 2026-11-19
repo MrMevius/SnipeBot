@@ -62,7 +62,8 @@ describe("App", () => {
                 target_price: 20,
                 site_key: "hema",
                 active: true,
-                current_price: null,
+                current_price: 18,
+                first_price: 25,
                 last_checked_at: null,
                 last_status: "pending",
                 archived_at: null,
@@ -100,6 +101,9 @@ describe("App", () => {
     expect(screen.getByRole("navigation", { name: "Hoofdnavigatie" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Watchlist" }).getAttribute("aria-current")).toBe("page");
     expect(await screen.findByText("Lamp")).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "First price" })).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "€ 25.00" })).toBeTruthy();
+    expect(screen.getByRole("cell", { name: "-28%" })).toBeTruthy();
     expect(screen.getByTestId("watchlist-preview-1")).toBeTruthy();
     expect(screen.getByTestId("thumbnail-1")).toBeTruthy();
     expect(screen.getAllByText("hema").length).toBeGreaterThan(0);

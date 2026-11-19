@@ -11,6 +11,7 @@ export type WatchItem = {
   image_url: string | null;
   active: boolean;
   current_price: number | null;
+  first_price: number | null;
   last_checked_at: string | null;
   last_status: string;
   archived_at: string | null;

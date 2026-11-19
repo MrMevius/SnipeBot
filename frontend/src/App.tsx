@@ -104,6 +104,19 @@ function formatPrice(
   return `€ ${value.toFixed(2)}`;
 }
 
+const priceChangeFormatter = new Intl.NumberFormat("en", {
+  style: "percent",
+  signDisplay: "exceptZero",
+  maximumFractionDigits: 1,
+});
+
+function formatPriceChange(first: number | null, current: number | null): string {
+  if (first == null || first <= 0 || current == null) {
+    return "-";
+  }
+  return priceChangeFormatter.format((current - first) / first);
+}
+
 function formatDateTime(value: Date | string | null | undefined): string {
   if (!value) {
     return "-";
@@ -2208,6 +2221,8 @@ export function App() {
                           Current <span className="sort-indicator">{sortLabel("current")}</span>
                         </button>
                       </th>
+                      <th scope="col" title="First successful price check">First price</th>
+                      <th scope="col" title="Percentage change since the first price">Change %</th>
                       <th>
                         <button type="button" className="sort-button" onClick={() => handleSortByColumn("status")}>
                           Status <span className="sort-indicator">{sortLabel("status")}</span>
@@ -2243,6 +2258,8 @@ export function App() {
                         <td>{item.site_key}</td>
                         <td>{formatPrice(item.target_price, currencyDisplayMode)}</td>
                         <td>{formatPrice(item.current_price, currencyDisplayMode)}</td>
+                        <td className="watchlist-price">{formatPrice(item.first_price, currencyDisplayMode)}</td>
+                        <td className="watchlist-price">{formatPriceChange(item.first_price, item.current_price)}</td>
                         <td>
                           {(() => {
                             const meta = getStatusMeta(item.last_status);

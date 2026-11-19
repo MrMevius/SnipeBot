@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from snipebot.core.config import get_settings
+from snipebot.persistence.first_price import BACKFILL_FIRST_PRICE
 from snipebot.persistence.models import Base
 
 _engine = None
@@ -72,6 +73,7 @@ def _ensure_legacy_columns() -> None:
         return
 
     with get_engine().begin() as connection:
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
         rows = connection.execute(text("PRAGMA table_info('watch_items')")).fetchall()
         existing_columns = {row[1] for row in rows}
 
@@ -106,6 +108,12 @@ def _ensure_legacy_columns() -> None:
             connection.execute(
                 text("ALTER TABLE watch_items ADD COLUMN image_url TEXT")
             )
+
+        if "first_price" not in existing_columns:
+            connection.execute(
+                text("ALTER TABLE watch_items ADD COLUMN first_price NUMERIC(10, 2)")
+            )
+            connection.execute(text(BACKFILL_FIRST_PRICE))
 
         alert_rows = connection.execute(
             text("PRAGMA table_info('alert_events')")

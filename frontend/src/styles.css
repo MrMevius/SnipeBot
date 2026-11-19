@@ -175,6 +175,11 @@ body {
   overflow-x: auto;
 }
 
+.watchlist-price {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .watchlist-table-scroll:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
