@@ -9,6 +9,9 @@ jobs:
   backend-tests:
     name: Backend tests
     runs-on: ubuntu-latest
+    env:
+      # The default database path (/data) is not writable on the runner.
+      SNIPEBOT_DB_URL: sqlite:////tmp/snipebot-ci.db
 
     steps:
       - name: Checkout
