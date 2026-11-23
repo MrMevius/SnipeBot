@@ -24,7 +24,7 @@ def run_due_price_checks(db_session: Session, settings: Settings) -> int:
         telegram_enabled,
         telegram_bot_token,
         telegram_chat_id,
-    ) = _resolve_notification_settings(db_session, settings)
+    ) = resolve_notification_settings(db_session, settings)
     notifier = build_notifier(
         settings,
         notifications_enabled=notifications_enabled,
@@ -356,7 +356,7 @@ def _dispatch_alerts_for_success(
             )
 
 
-def _resolve_notification_settings(
+def resolve_notification_settings(
     db_session: Session, settings: Settings
 ) -> tuple[bool, bool, str, str]:
     values = {

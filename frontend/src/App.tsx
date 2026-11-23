@@ -1,4 +1,5 @@
 import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { SearchesPage } from "./SearchesPage";
 import {
   archiveWatchItem,
   bulkUpdateWatchItems,
@@ -677,7 +678,8 @@ function TrendChart({
 type Route =
   | { kind: "overview" }
   | { kind: "add-product" }
-  | { kind: "detail"; itemId: number };
+  | { kind: "detail"; itemId: number }
+  | { kind: "searches"; searchId: number | null };
 
 type SettingsFormState = {
   notificationsEnabled: boolean;
@@ -710,7 +712,7 @@ type BulkAction = BulkWatchItemPayload["action"];
 type MenuView = "watchlist" | "supported-shops" | "stats" | "settings";
 type SortableColumn = "product" | "site" | "target" | "current" | "status";
 type RowDensity = "compact" | "comfortable";
-type GlobalMenuKey = MenuView | "add-product";
+type GlobalMenuKey = MenuView | "add-product" | "searches";
 
 type GlobalMenuItem = {
   key: GlobalMenuKey;
@@ -795,6 +797,10 @@ function parseRoute(pathname: string): Route {
   const match = pathname.match(/^\/products\/(\d+)$/);
   if (match) {
     return { kind: "detail", itemId: Number(match[1]) };
+  }
+  const searchMatch = pathname.match(/^\/searches(?:\/(\d+))?\/?$/);
+  if (searchMatch) {
+    return { kind: "searches", searchId: searchMatch[1] ? Number(searchMatch[1]) : null };
   }
   return { kind: "overview" };
 }
@@ -1037,6 +1043,16 @@ function ProductDetailPage({
       onClick: (event) => {
         event.preventDefault();
         onNavigate("/add-product");
+      },
+    },
+    {
+      key: "searches",
+      label: "Marktplaats",
+      href: "/searches",
+      active: false,
+      onClick: (event) => {
+        event.preventDefault();
+        onNavigate("/searches");
       },
     },
     {
@@ -1337,6 +1353,16 @@ export function App() {
       onClick: (event) => {
         event.preventDefault();
         navigate("/add-product");
+      },
+    },
+    {
+      key: "searches",
+      label: "Marktplaats",
+      href: "/searches",
+      active: route.kind === "searches",
+      onClick: (event) => {
+        event.preventDefault();
+        navigate("/searches");
       },
     },
     {
@@ -1773,6 +1799,22 @@ export function App() {
         menuOpen={menuOpen}
         onToggleMenu={() => setMenuOpen((previous) => !previous)}
         onSelectMenuView={selectOverviewView}
+      />
+    );
+  }
+
+  if (route.kind === "searches") {
+    return (
+      <SearchesPage
+        searchId={route.searchId}
+        onNavigate={navigate}
+        menubar={
+          <GlobalTopMenubar
+            items={globalMenuItems}
+            menuOpen={menuOpen}
+            onToggleMenu={() => setMenuOpen((previous) => !previous)}
+          />
+        }
       />
     );
   }

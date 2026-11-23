@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from snipebot.notifications.base import Notifier
 from snipebot.notifications.models import NotificationMessage, NotificationResult
+
+logger = logging.getLogger(__name__)
+
+# Telegram limits photo captions to 1024 characters.
+CAPTION_LIMIT = 1024
 
 
 class TelegramNotifier(Notifier):
@@ -15,14 +21,33 @@ class TelegramNotifier(Notifier):
         self._chat_id = chat_id
 
     def send(self, message: NotificationMessage) -> NotificationResult:
-        endpoint = f"https://api.telegram.org/bot{self._bot_token}/sendMessage"
-        payload = urlencode(
+        if message.photo_url and len(message.text) <= CAPTION_LIMIT:
+            result = self._call(
+                "sendPhoto",
+                {
+                    "chat_id": self._chat_id,
+                    "photo": message.photo_url,
+                    "caption": message.text,
+                },
+            )
+            if result.ok:
+                return result
+            logger.warning(
+                "telegram.photo_failed falling back to text reason=%s", result.error
+            )
+
+        return self._call(
+            "sendMessage",
             {
                 "chat_id": self._chat_id,
                 "text": message.text,
                 "disable_web_page_preview": "true",
-            }
-        ).encode("utf-8")
+            },
+        )
+
+    def _call(self, method: str, fields: dict[str, str]) -> NotificationResult:
+        endpoint = f"https://api.telegram.org/bot{self._bot_token}/{method}"
+        payload = urlencode(fields).encode("utf-8")
         request = Request(
             endpoint,
             data=payload,
