@@ -34,6 +34,10 @@ def _reset_tables() -> None:
     init_db()
     with get_engine().begin() as connection:
         for table in (
+            "marketplace_item_prices",
+            "marketplace_item_images",
+            "marketplace_item_versions",
+            "marketplace_items",
             "marketplace_alert_events",
             "marketplace_listing_prices",
             "marketplace_listings",
@@ -64,6 +68,7 @@ def _create(fetcher: FakeFetcher, **kwargs) -> int:
             url=kwargs.get("url", SEARCH_URL),
             exclude_keywords=kwargs.get("exclude_keywords", []),
             seller_type=kwargs.get("seller_type", "all"),
+            alert_max_price=kwargs.get("alert_max_price", Decimal("1000000")),
         )
         return search.id
 
@@ -175,6 +180,54 @@ def test_price_drop_alerts_once_per_drop_and_records_history() -> None:
         row = session.scalars(select(MarketplaceListing)).one()
         prices = [point.price for point in row.prices]
     assert prices == [Decimal("22500.00"), Decimal("21000.00"), Decimal("22000.00")]
+
+
+def test_alerts_respect_the_price_ceiling() -> None:
+    _reset_tables()
+    _enable_alerts()
+    fetcher = FakeFetcher()
+    notifier = CollectingNotifier()
+    _create(fetcher, alert_max_price=Decimal("20000"))
+
+    _run(fetcher, notifier, search_payload([listing(100, price_cents=2500000)]))
+    # New listings: only the one at or below the ceiling alerts; no price, no alert.
+    _run(
+        fetcher,
+        notifier,
+        search_payload(
+            [
+                listing(300, price_cents=2000000),
+                listing(250, price_cents=2100000),
+                listing(240, price_cents=0),
+                listing(100, price_cents=2500000),
+            ]
+        ),
+    )
+    assert [message.title for message in notifier.messages] == ["🆕 Nieuwe advertentie — Golf"]
+    assert "Volkswagen Golf 300" in notifier.messages[0].body
+
+    # Drops: above the ceiling stays silent; to and below the ceiling alert each time.
+    notifier.messages.clear()
+    for price_cents in (2200000, 1950000, 1900000):
+        _run(fetcher, notifier, search_payload([listing(100, price_cents=price_cents)]))
+    assert [message.body.splitlines()[1] for message in notifier.messages] == [
+        "💶 € 22.000 → € 19.500 (−€ 2.500)",
+        "💶 € 19.500 → € 19.000 (−€ 500)",
+    ]
+
+
+def test_search_without_ceiling_sends_no_alerts() -> None:
+    _reset_tables()
+    _enable_alerts()
+    fetcher = FakeFetcher()
+    notifier = CollectingNotifier()
+    _create(fetcher, alert_max_price=None)
+
+    _run(fetcher, notifier, search_payload([listing(100)]))
+    _run(fetcher, notifier, search_payload([listing(200), listing(100, price_cents=100000)]))
+
+    assert notifier.messages == []
+    assert len(_listings()) == 2
 
 
 def test_exclude_keywords_filter_title_and_description() -> None:
@@ -294,10 +347,12 @@ def test_api_preview_create_list_and_listings() -> None:
                 "url": SEARCH_URL,
                 "exclude_keywords": ["Schade", "schade", ""],
                 "seller_type": "private",
+                "alert_max_price": 25000,
             },
         )
         assert created.status_code == 201
         search = created.json()
+        assert search["alert_max_price"] == 25000.0
         assert search["exclude_keywords"] == ["schade"]
         assert search["seller_type"] == "private"
         assert search["baseline_done"] is False
@@ -335,6 +390,16 @@ def test_api_patch_filters_rebaselines_and_delete() -> None:
         renamed = client.patch(f"/searches/{search_id}", json={"name": "Golf 8"}).json()
         assert renamed["name"] == "Golf 8"
         assert renamed["baseline_done"] is True
+        assert renamed["alert_max_price"] is None
+
+        capped = client.patch(f"/searches/{search_id}", json={"alert_max_price": 25000}).json()
+        assert capped["alert_max_price"] == 25000.0
+        assert capped["baseline_done"] is True
+        kept = client.patch(f"/searches/{search_id}", json={"name": "Golf 8"}).json()
+        assert kept["alert_max_price"] == 25000.0
+        assert client.patch(f"/searches/{search_id}", json={"alert_max_price": 0}).status_code == 422
+        cleared = client.patch(f"/searches/{search_id}", json={"alert_max_price": None}).json()
+        assert cleared["alert_max_price"] is None
 
         changed = client.patch(
             f"/searches/{search_id}", json={"seller_type": "business", "active": False}

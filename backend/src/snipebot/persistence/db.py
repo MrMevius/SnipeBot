@@ -125,3 +125,14 @@ def _ensure_legacy_columns() -> None:
                     "ALTER TABLE alert_events ADD COLUMN price_check_checked_at DATETIME"
                 )
             )
+
+        search_rows = connection.execute(
+            text("PRAGMA table_info('marketplace_searches')")
+        ).fetchall()
+        search_columns = {row[1] for row in search_rows}
+        if "alert_max_price" not in search_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE marketplace_searches ADD COLUMN alert_max_price NUMERIC(12, 2)"
+                )
+            )

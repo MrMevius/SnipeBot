@@ -543,6 +543,7 @@ export type MarketplaceSearch = {
   description: string[];
   exclude_keywords: string[];
   seller_type: SellerType;
+  alert_max_price: number | null;
   active: boolean;
   baseline_done: boolean;
   last_checked_at: string | null;
@@ -560,6 +561,7 @@ export type MarketplaceSearchCreatePayload = {
   url: string;
   exclude_keywords: string[];
   seller_type: SellerType;
+  alert_max_price: number | null;
 };
 
 export type MarketplaceSearchUpdatePayload = {
@@ -567,6 +569,7 @@ export type MarketplaceSearchUpdatePayload = {
   exclude_keywords?: string[];
   seller_type?: SellerType;
   active?: boolean;
+  alert_max_price?: number | null;
 };
 
 export type MarketplaceListing = {
@@ -587,6 +590,7 @@ export type MarketplaceListing = {
   last_seen_at: string;
   gone_at: string | null;
   price_history: { price: number; observed_at: string }[];
+  archive_id: number | null;
 };
 
 export async function previewMarketplaceSearch(
@@ -665,4 +669,117 @@ export async function fetchMarketplaceListings(
   const response = await apiFetch(`${API_BASE_URL}/searches/${searchId}/listings`);
   const payload = await parseResponse<{ items: MarketplaceListing[] }>(response);
   return payload.items;
+}
+
+export type ArchiveStatus = "pending" | "archived" | "gone" | "error";
+
+export type ArchiveItemSummary = {
+  id: number;
+  item_id: string;
+  title: string;
+  url: string;
+  price: number | null;
+  price_type: string | null;
+  status: ArchiveStatus;
+  city: string | null;
+  cover_image_id: number | null;
+  thumbnail_url: string | null;
+  attributes: Record<string, string>;
+  first_seen_at: string;
+  last_seen_at: string;
+  gone_at: string | null;
+  archived_at: string | null;
+  searches: { id: number; name: string }[];
+};
+
+export type ArchiveUsage = {
+  items: number;
+  images: number;
+  bytes: number;
+};
+
+export type ArchiveListResponse = {
+  items: ArchiveItemSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+  usage: ArchiveUsage;
+};
+
+export type ArchiveQuery = {
+  q?: string;
+  search_id?: number;
+  status?: "online" | "gone";
+  sort?: "first_seen" | "last_seen" | "price" | "title";
+  order?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+};
+
+export type ArchiveAttributeGroup = {
+  label: string;
+  items: { key: string; label: string; value: string }[];
+};
+
+export type ArchiveVersion = {
+  id: number;
+  fetched_at: string;
+  fields: { label: string; before: string | null; after: string | null }[];
+  description_diff: string[];
+  images_added: number;
+  images_removed: number;
+};
+
+export type ArchiveItemDetail = ArchiveItemSummary & {
+  postcode: string | null;
+  category: string[];
+  description_html: string | null;
+  attribute_groups: ArchiveAttributeGroup[];
+  seller: Record<string, string | number | boolean>;
+  stats: { viewCount?: number; favoritedCount?: number; since?: string };
+  highlights: string[];
+  is_reserved: boolean;
+  images: { id: number; position: number; first_seen_at: string; removed_at: string | null }[];
+  price_history: { price: number; observed_at: string }[];
+  versions: ArchiveVersion[];
+  next_fetch_at: string | null;
+  fetch_failure_count: number;
+  last_error_message: string | null;
+};
+
+export function archiveImageUrl(imageId: number): string {
+  return `${API_BASE_URL}/archive/images/${imageId}`;
+}
+
+export async function fetchArchive(query: ArchiveQuery = {}): Promise<ArchiveListResponse> {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== "") {
+      params.set(key, String(value));
+    }
+  });
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await apiFetch(`${API_BASE_URL}/archive${suffix}`);
+  return parseResponse<ArchiveListResponse>(response);
+}
+
+export async function fetchArchiveItem(archiveId: number): Promise<ArchiveItemDetail> {
+  const response = await apiFetch(`${API_BASE_URL}/archive/${archiveId}`);
+  return parseResponse<ArchiveItemDetail>(response);
+}
+
+export async function refreshArchiveItem(archiveId: number): Promise<ArchiveItemDetail> {
+  const response = await apiFetch(`${API_BASE_URL}/archive/${archiveId}/refresh`, {
+    method: "POST",
+  });
+  return parseResponse<ArchiveItemDetail>(response);
+}
+
+export async function deleteArchiveItem(archiveId: number): Promise<void> {
+  const response = await apiFetch(`${API_BASE_URL}/archive/${archiveId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    await parseResponse<unknown>(response);
+  }
 }

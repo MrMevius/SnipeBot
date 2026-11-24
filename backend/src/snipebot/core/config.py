@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     retry_max_interval_seconds: int = 3600
     marketplace_check_interval_seconds: int = 600
     marketplace_check_jitter_seconds: int = 60
+    marketplace_archive_enabled: bool = True
+    marketplace_archive_dir: str = "/data/archive"
+    marketplace_archive_image_size: str = "original"
+    marketplace_archive_delay_seconds: float = 3.0
+    marketplace_archive_tick_budget_seconds: int = 45
+    marketplace_archive_refresh_days: int = 7
 
     @property
     def is_sqlite(self) -> bool:
@@ -83,6 +89,25 @@ def get_settings() -> Settings:
         ),
         marketplace_check_jitter_seconds=int(
             _get_env("SNIPEBOT_MARKETPLACE_CHECK_JITTER_SECONDS", "60")
+        ),
+        marketplace_archive_enabled=_get_env(
+            "SNIPEBOT_MARKETPLACE_ARCHIVE_ENABLED", "true"
+        ).lower()
+        in {"1", "true", "yes", "on"},
+        marketplace_archive_dir=_get_env(
+            "SNIPEBOT_MARKETPLACE_ARCHIVE_DIR", "/data/archive"
+        ),
+        marketplace_archive_image_size=_get_env(
+            "SNIPEBOT_MARKETPLACE_ARCHIVE_IMAGE_SIZE", "original"
+        ),
+        marketplace_archive_delay_seconds=float(
+            _get_env("SNIPEBOT_MARKETPLACE_ARCHIVE_DELAY_SECONDS", "3")
+        ),
+        marketplace_archive_tick_budget_seconds=int(
+            _get_env("SNIPEBOT_MARKETPLACE_ARCHIVE_TICK_BUDGET_SECONDS", "45")
+        ),
+        marketplace_archive_refresh_days=int(
+            _get_env("SNIPEBOT_MARKETPLACE_ARCHIVE_REFRESH_DAYS", "7")
         ),
     )
 
