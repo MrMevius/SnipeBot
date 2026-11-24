@@ -109,7 +109,12 @@ function CeilingInput({ value, onChange }: { value: string; onChange: (value: st
   );
 }
 
-const PLATFORM_COUNTRY: Record<string, string> = { marktplaats: "NL", "2dehands": "BE", autotrack: "NL" };
+const PLATFORM_COUNTRY: Record<string, string> = {
+  marktplaats: "NL",
+  "2dehands": "BE",
+  viabovag: "NL",
+  autotrack: "NL",
+};
 
 function listingCountry(listing: MarketplaceListing): string | null {
   const stated = listing.attributes.country;

@@ -26,3 +26,9 @@
 
 - [x] 4.1 `MarktplaatsSite` for Marktplaats and 2dehands (search API, listing pages, seller links, image host); range and battery as post-filters on 2dehands.
 - [x] 4.2 An ad on several platforms under one id is recorded once.
+
+## 5. ViaBOVAG (PR F)
+
+- [x] 5.1 ViaBOVAG adapter: React Server Components flight payload, make/model facets, all result pages, all other filters as post-filters.
+- [x] 5.2 Archive ViaBOVAG listings (specification groups, dealer comments, BOVAG certainties, photos, license plate).
+- Kleinanzeigen.de was examined and dropped: it answers SnipeBot's HTTP client with 403 (automated clients are refused); SnipeBot does not work around that.

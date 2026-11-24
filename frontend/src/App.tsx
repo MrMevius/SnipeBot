@@ -793,6 +793,16 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     note: "Buitenland: land bij de plaats, prijs zonder BPM/import. Bevat alle AutoTrack-advertenties.",
   },
   {
+    siteKey: "viabovag",
+    label: "ViaBOVAG",
+    domain: "viabovag.nl",
+    status: "live",
+    countries: "NL",
+    sellers: "BOVAG-dealer",
+    filters: "Alles behalve merk/model door SnipeBot (waarden staan altijd in de advertentie)",
+    note: "Met kenteken, BOVAG-garantie en actieradius/accu volgens opgave. Veel auto's staan ook op AutoScout24/Marktplaats.",
+  },
+  {
     siteKey: "autotrack",
     label: "AutoTrack",
     domain: "autotrack.nl",
@@ -821,16 +831,6 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     sellers: "Vooral dealer",
     filters: "Nog te onderzoeken",
     note: "Occasionaanbod van het automagazine.",
-  },
-  {
-    siteKey: "viabovag",
-    label: "ViaBOVAG",
-    domain: "viabovag.nl",
-    status: "planned",
-    countries: "NL",
-    sellers: "BOVAG-dealer",
-    filters: "Nog te onderzoeken",
-    note: "Alleen BOVAG-bedrijven, met garantie.",
   },
   {
     siteKey: "autotrader_nl",
