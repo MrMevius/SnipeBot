@@ -918,11 +918,16 @@ td {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.supported-shop-card ol {
+.supported-shop-card ol,
+.supported-shop-card ul {
   margin: 10px 0 0;
   padding-left: 18px;
   display: grid;
   gap: 6px;
+}
+
+.supported-shops-panel h3 {
+  margin: 16px 0 4px;
 }
 
 .supported-shop-card li {
