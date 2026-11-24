@@ -35,8 +35,9 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from snipebot.adapters.marketplaces import autotrack_listing
-from snipebot.adapters.marketplaces.autotrack import normalize_plate
+from snipebot.adapters.marketplaces import scout24_listing
+from snipebot.adapters.marketplaces.platforms import SHARED_LISTING_IDS
+from snipebot.adapters.marketplaces.scout24 import SITES, normalize_plate
 from snipebot.adapters.marketplaces.base import Listing, MarketplaceError
 from snipebot.adapters.marketplaces.marktplaats import Fetcher
 from snipebot.adapters.marketplaces.marktplaats_listing import (
@@ -59,7 +60,7 @@ from snipebot.persistence.models import (
 logger = logging.getLogger(__name__)
 
 # Platforms whose listings are archived.
-ARCHIVE_MARKETPLACES = ("marktplaats", "autotrack")
+ARCHIVE_MARKETPLACES = ("marktplaats", "autoscout24", "autotrack")
 DUE_BATCH_SIZE = 50
 MAX_FETCH_FAILURES = 5
 IMAGE_DELAY_SECONDS = 0.2
@@ -87,18 +88,20 @@ def build_sources(
     image_fetcher: ImageFetcher | None = None,
 ) -> dict[str, ArchiveSource]:
     """Archive sources per platform; ``fetch``/``image_fetcher`` replace Marktplaats I/O."""
-    return {
+    sources = {
         "marktplaats": ArchiveSource(
             fetch_detail=lambda url: fetch_listing(
                 url, fetch=fetch, image_size=settings.marketplace_archive_image_size
             ),
             fetch_image=image_fetcher or image_fetch,
-        ),
-        "autotrack": ArchiveSource(
-            fetch_detail=autotrack_listing.fetch_listing,
-            fetch_image=autotrack_listing.image_fetch,
-        ),
+        )
     }
+    for key, site in SITES.items():
+        sources[key] = ArchiveSource(
+            fetch_detail=lambda url, site=site: scout24_listing.fetch_listing(url, site),
+            fetch_image=scout24_listing.image_fetch,
+        )
+    return sources
 
 
 class ArchiveStore:
@@ -154,7 +157,9 @@ def observe_listings(
     items = _items_by_key(db_session, [(listing.marketplace, listing.item_id) for listing in listings])
     for listing in listings:
         key = (listing.marketplace, listing.item_id)
-        item = items.get(key)
+        item = items.get(key) or _adopt_shared_item(db_session, listing)
+        if item is not None:
+            items[key] = item
         if item is None:
             item = _new_item(
                 search.owner_id, listing.marketplace, listing.item_id, listing.url, listing.title, now
@@ -689,9 +694,14 @@ def archive_usage(db_session: Session, *, owner_id: str) -> ArchiveUsage:
 
 def delete_archive_item(db_session: Session, item: MarketplaceItem, store: ArchiveStore) -> None:
     marketplace, item_id = item.marketplace, item.item_id
+    # Photos may sit under another platform's folder (adopted items).
+    folders = {tuple(image.file_path.split("/")[:2]) for image in item.images}
     db_session.delete(item)
     db_session.commit()
     store.delete_item(marketplace, item_id)
+    for folder_marketplace, folder_item in folders:
+        if folder_item == item_id:
+            store.delete_item(folder_marketplace, folder_item)
     logger.info("marketplace_archive.deleted item_id=%s", item_id)
 
 
@@ -792,6 +802,30 @@ def _items_by_key(
         for item in items
         if (item.marketplace, item.item_id) in wanted
     }
+
+
+def _adopt_shared_item(db_session: Session, listing: Listing) -> MarketplaceItem | None:
+    """Move an archive item of a platform with the same listing ids (AutoTrack →
+    AutoScout24) to ``listing``'s platform, keeping its versions and photos."""
+    other = SHARED_LISTING_IDS.get(listing.marketplace)
+    if other is None:
+        return None
+    item = db_session.scalar(
+        select(MarketplaceItem).where(
+            MarketplaceItem.marketplace == other, MarketplaceItem.item_id == listing.item_id
+        )
+    )
+    if item is not None:
+        item.marketplace = listing.marketplace
+        item.url = listing.url
+        item.next_fetch_at = item.next_fetch_at or datetime.now(UTC)
+        logger.info(
+            "marketplace_archive.adopted item_id=%s from=%s to=%s",
+            item.item_id,
+            other,
+            listing.marketplace,
+        )
+    return item
 
 
 def _backfill_license_plates(db_session: Session) -> None:

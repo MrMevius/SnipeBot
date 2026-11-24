@@ -12,4 +12,10 @@
 - [x] 2.1 AutoTrack adapter: makes/models, query from filters, all result pages (newest first, de-duplicated), parsing, block detection.
 - [x] 2.2 Archive AutoTrack listings (details, original photos, versions).
 - [x] 2.3 Mark duplicates across platforms by license plate.
-- [ ] 2.4 Production: add AutoTrack to both searches with a silent baseline.
+- [x] 2.4 Production: add AutoTrack to both searches with a silent baseline.
+
+## 3. AutoScout24 (PR C)
+
+- [x] 3.1 Shared adapter for the AutoScout24 group sites (`Scout24Site`): AutoTrack and AutoScout24.nl (NL, BE, DE; private sellers; country shown with the city).
+- [x] 3.2 Same listing ids: switching AutoTrack → AutoScout24 moves search listings and archive items instead of recording them again.
+- [ ] 3.3 Production: replace AutoTrack by AutoScout24 in both searches.

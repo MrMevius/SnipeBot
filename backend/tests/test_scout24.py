@@ -5,17 +5,19 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from autotrack_fakes import FakeAutoTrack, listing_page, search_listing, search_page, uuid
+from scout24_fakes import FakeScout24, listing_page, search_listing, search_page, uuid
 from marktplaats_fakes import CollectingNotifier, FakeFetcher, FakeImages, listing_page_html
-from snipebot.adapters.marketplaces import autotrack_listing
-from snipebot.adapters.marketplaces.autotrack import (
-    AutoTrackAdapter,
-    AutoTrackClient,
-    AutoTrackError,
+from snipebot.adapters.marketplaces import scout24_listing
+from snipebot.adapters.marketplaces.scout24 import (
+    AUTOSCOUT24,
+    AUTOTRACK,
+    Scout24Adapter,
+    Scout24Client,
+    Scout24Error,
     battery_kwh,
     original_image_url,
 )
-from snipebot.adapters.marketplaces.autotrack_listing import parse_listing_page
+from snipebot.adapters.marketplaces.scout24_listing import parse_listing_page
 from snipebot.adapters.marketplaces.base import MarketplaceError, SearchFilters
 from snipebot.adapters.marketplaces.marktplaats import MarktplaatsAdapter
 from snipebot.api.archive import get_archive_store
@@ -40,13 +42,13 @@ from snipebot.persistence.models import (
 FILTERS = SearchFilters(make="Tesla", model="Model 3", year_min=2024, range_min=550, battery_max=80)
 
 
-def _adapter(fake: FakeAutoTrack, sleeps: list[float] | None = None) -> AutoTrackAdapter:
+def _adapter(fake: FakeScout24, sleeps: list[float] | None = None) -> Scout24Adapter:
     sleep = sleeps.append if sleeps is not None else (lambda _: None)
-    return AutoTrackAdapter(AutoTrackClient(fetch=fake, sleep=sleep))
+    return Scout24Adapter(fake.site, Scout24Client(fake.site, fetch=fake, sleep=sleep))
 
 
 def test_taxonomy_and_query() -> None:
-    adapter = _adapter(FakeAutoTrack())
+    adapter = _adapter(FakeScout24())
     assert [make.label for make in adapter.makes()] == ["Polestar", "Tesla"]
     built = adapter.build_query(
         SearchFilters(make="tesla", model="model 3", year_min=2024, price_max=40000, range_min=600),
@@ -55,15 +57,15 @@ def test_taxonomy_and_query() -> None:
     assert built.query == {"cat": "ma51520mo74665", "fregfrom": 2024, "priceto": 40000}
     assert built.post_filters == ["range"]
 
-    with pytest.raises(AutoTrackError) as private:
+    with pytest.raises(Scout24Error) as private:
         adapter.build_query(FILTERS, "private")
     assert private.value.kind == "unsupported"
-    with pytest.raises(AutoTrackError, match="not available on AutoTrack"):
+    with pytest.raises(Scout24Error, match="not available on AutoTrack"):
         adapter.build_query(SearchFilters(make="Tesla", model="Cybertruck"), "all")
 
 
 def test_search_reads_all_pages_newest_first() -> None:
-    fake = FakeAutoTrack()
+    fake = FakeScout24()
     fake.search_pages.append(
         {
             1: search_page([search_listing(1), search_listing(2)], total=3, pages=2),
@@ -94,12 +96,13 @@ def test_search_reads_all_pages_newest_first() -> None:
         "mileage": "12345",
         "fuel": "Elektrisch",
         "transmission": "Automatisch",
+        "country": "NL",
     }
     assert page.listings[2].license_plate is None
 
 
 def test_preview_reads_one_page() -> None:
-    fake = FakeAutoTrack()
+    fake = FakeScout24()
     fake.search_pages.append({1: search_page([search_listing(1)], total=40, pages=2)})
     page = _adapter(fake).search({"cat": "ma51520mo74665"}, limit=20)
     assert page.complete is False
@@ -116,7 +119,7 @@ def test_battery_and_images() -> None:
 
 
 def test_listing_page_details() -> None:
-    detail = parse_listing_page(listing_page(5), url="https://www.autotrack.nl/a/x")
+    detail = parse_listing_page(listing_page(5), url="https://www.autotrack.nl/a/x", site=AUTOTRACK)
     assert detail.item_id == uuid(5)
     assert detail.title == "Tesla Model 3 Long Range RWD 78 kWh"
     assert detail.price == Decimal(34950)
@@ -141,8 +144,8 @@ def test_listing_page_details() -> None:
     assert detail.stats == {"viewCount": 1397, "favoritedCount": 37, "since": "2026-11-05T11:26:29.042Z"}
     assert detail.extra == {"license_plate": "S123AB"}
 
-    with pytest.raises(AutoTrackError) as removed:
-        parse_listing_page(search_page([]), url="https://www.autotrack.nl/a/x")
+    with pytest.raises(Scout24Error) as removed:
+        parse_listing_page(search_page([]), url="https://www.autotrack.nl/a/x", site=AUTOTRACK)
     assert removed.value.kind == "gone"
 
 
@@ -174,10 +177,10 @@ def settings(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
-def _sources(settings, fake: FakeAutoTrack, fetcher: FakeFetcher, images: FakeImages):
+def _sources(settings, fake: FakeScout24, fetcher: FakeFetcher, images: FakeImages):
     sources = build_sources(settings, fetch=fetcher, image_fetcher=images)
-    sources["autotrack"] = ArchiveSource(
-        fetch_detail=lambda url: autotrack_listing.fetch_listing(url, fetch=fake),
+    sources[fake.site.key] = ArchiveSource(
+        fetch_detail=lambda url: scout24_listing.fetch_listing(url, fake.site, fetch=fake),
         fetch_image=fake.image,
     )
     return sources
@@ -195,7 +198,7 @@ def _check(adapters) -> None:
 
 
 def test_autotrack_listings_are_searched_filtered_and_archived(settings) -> None:
-    fake = FakeAutoTrack()
+    fake = FakeScout24()
     adapters = {"autotrack": _adapter(fake)}
     with get_session_factory()() as session:
         create_search(
@@ -249,8 +252,8 @@ def test_autotrack_listings_are_searched_filtered_and_archived(settings) -> None
 
 
 def test_blocked_platform_does_not_pause_the_other(settings) -> None:
-    fake = FakeAutoTrack()
-    fake.listing_pages[uuid(1)] = AutoTrackError("blocked", "HTTP 429")
+    fake = FakeScout24()
+    fake.listing_pages[uuid(1)] = Scout24Error("blocked", "HTTP 429")
     now = datetime.now(UTC)
     with get_session_factory()() as session:
         for marketplace, item_id, url in (
@@ -286,7 +289,7 @@ def test_blocked_platform_does_not_pause_the_other(settings) -> None:
 
 
 def test_duplicates_across_platforms_by_license_plate(settings, tmp_path) -> None:
-    fake = FakeAutoTrack()
+    fake = FakeScout24()
     fetcher = FakeFetcher()
     now = datetime.now(UTC)
     with get_session_factory()() as session:
@@ -338,9 +341,125 @@ def test_duplicates_across_platforms_by_license_plate(settings, tmp_path) -> Non
         app.dependency_overrides.clear()
 
 
-def test_platform_registry_offers_autotrack() -> None:
+def test_platform_registry_offers_scout24_sites() -> None:
     from snipebot.adapters.marketplaces.platforms import get_adapters
 
-    assert list(get_adapters()) == ["marktplaats", "autotrack"]
+    assert list(get_adapters()) == ["marktplaats", "autoscout24", "autotrack"]
     assert isinstance(get_adapters()["marktplaats"], MarktplaatsAdapter)
-    assert issubclass(AutoTrackError, MarketplaceError)
+    assert issubclass(Scout24Error, MarketplaceError)
+
+
+# --- AutoScout24 ----------------------------------------------------------------
+
+
+def test_autoscout24_searches_nl_be_de_with_private_sellers() -> None:
+    fake = FakeScout24(AUTOSCOUT24)
+    adapter = _adapter(fake)
+    assert adapter.key == "autoscout24"
+    built = adapter.build_query(SearchFilters(make="Tesla", model="Model 3", year_min=2024), "private")
+    assert built.query == {"cat": "ma51520mo74665", "cy": "NL,B,D", "custtype": "P", "fregfrom": 2024}
+
+    fake.search_pages.append(
+        {
+            1: search_page(
+                [
+                    search_listing(1, country="BE", seller="PrivateSeller", site=AUTOSCOUT24),
+                    search_listing(2, site=AUTOSCOUT24),
+                ]
+            )
+        }
+    )
+    page = adapter.search(built.query)
+    assert "https://www.autoscout24.nl/lst?" in fake.requests[-1]
+    assert "cy=NL%2CB%2CD" in fake.requests[-1]
+    foreign, dutch = page.listings
+    assert foreign.marketplace == "autoscout24"
+    assert foreign.url.startswith("https://www.autoscout24.nl/aanbod/")
+    assert (foreign.city, foreign.seller_type, foreign.attributes["country"]) == ("Lelystad (BE)", "private", "BE")
+    assert dutch.city == "Lelystad"
+
+
+def test_switching_autotrack_to_autoscout24_keeps_listings_and_archive(settings) -> None:
+    autotrack = FakeScout24(AUTOTRACK)
+    autoscout = FakeScout24(AUTOSCOUT24)
+    adapters = {"autotrack": _adapter(autotrack), "autoscout24": _adapter(autoscout)}
+    with get_session_factory()() as session:
+        search_id = create_search(
+            session,
+            adapters,
+            owner_id="local",
+            name="Model 3",
+            filters=SearchFilters(make="Tesla", model="Model 3"),
+            platforms=["autotrack"],
+            exclude_keywords=[],
+            seller_type="all",
+            alert_max_price=Decimal("50000"),
+        ).id
+    autotrack.search_pages.append({1: search_page([search_listing(1, price=36000)])})
+    _check(adapters)
+    sources = _sources(settings, autotrack, FakeFetcher(), FakeImages())
+    with get_session_factory()() as session:
+        run_due_archive_fetches(session, settings, sources=sources, sleep=lambda _: None)
+    photos = len(autotrack.image_requests)
+    assert photos == 3
+
+    from snipebot.domain.marketplace_searches import update_search
+    from snipebot.persistence.models import MarketplaceSearch
+
+    with get_session_factory()() as session:
+        update_search(session, adapters, session.get(MarketplaceSearch, search_id), platforms=["autoscout24"])
+
+    notifier = CollectingNotifier()
+    session_settings = get_settings()
+    with get_session_factory()() as session:
+        session.add_all(
+            [AppSetting(key="notifications_enabled", value="true"), AppSetting(key="telegram_enabled", value="true")]
+        )
+        session.commit()
+    autoscout.search_pages.append(
+        {
+            1: search_page(
+                [
+                    search_listing(1, price=35000, site=AUTOSCOUT24),
+                    search_listing(2, country="DE", site=AUTOSCOUT24),
+                ]
+            )
+        }
+    )
+    with get_session_factory()() as session:
+        session.query(MarketplaceSearchSource).update(
+            {MarketplaceSearchSource.next_check_at: datetime.now(UTC) - timedelta(seconds=1)}
+        )
+        session.commit()
+        run_due_marketplace_searches(session, session_settings, adapters=adapters, notifier=notifier)
+
+    with get_session_factory()() as session:
+        rows = {row.item_id: row for row in session.scalars(select(MarketplaceListing))}
+        assert {key: row.marketplace for key, row in rows.items()} == {
+            uuid(1): "autoscout24",
+            uuid(2): "autoscout24",
+        }
+        assert [point.price for point in rows[uuid(1)].prices] == [Decimal(36000), Decimal(35000)]
+        assert rows[uuid(1)].from_baseline is True
+        items = {item.item_id: item for item in session.scalars(select(MarketplaceItem))}
+        assert items[uuid(1)].marketplace == "autoscout24"
+        assert items[uuid(1)].url.startswith("https://www.autoscout24.nl/")
+        assert len(items[uuid(1)].images) == 3
+    # The new baseline is silent; the known car's price drop does alert.
+    assert [message.title for message in notifier.messages] == ["📉 Prijsdaling — Model 3"]
+
+    with get_session_factory()() as session:
+        session.query(MarketplaceItem).update(
+            {MarketplaceItem.next_fetch_at: datetime.now(UTC) - timedelta(seconds=1)}
+        )
+        session.commit()
+        run_due_archive_fetches(
+            session, settings, sources=_sources(settings, autoscout, FakeFetcher(), FakeImages()), sleep=lambda _: None
+        )
+    with get_session_factory()() as session:
+        statuses = {item.item_id: item.status for item in session.scalars(select(MarketplaceItem))}
+    assert statuses == {uuid(1): "archived", uuid(2): "archived"}
+    assert any(f"/aanbod/tesla-model-3-cat_ma51520mo74665-{uuid(1)}" in url for url in autoscout.requests)
+    # Known photos are not downloaded again after the move.
+    assert all(uuid(1) not in url for url in autoscout.image_requests)
+    assert len([url for url in autoscout.image_requests if uuid(2) in url]) == 3

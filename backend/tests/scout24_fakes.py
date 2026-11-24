@@ -1,10 +1,12 @@
-"""Synthetic AutoTrack pages shaped like the real Next.js page data."""
+"""Synthetic AutoTrack/AutoScout24 pages shaped like the real Next.js page data."""
 
 from __future__ import annotations
 
 import json
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
+
+from snipebot.adapters.marketplaces.scout24 import AUTOTRACK, Scout24Site
 
 IMAGE_BASE = "https://prod.pictures.autoscout24.net/listing-images"
 TESLA = {"label": "Tesla", "value": 51520}
@@ -34,6 +36,9 @@ def search_listing(
     range_km: int | None = 600,
     plate: str | None = "S-123-AB",
     registration: str = "03-2024",
+    country: str = "NL",
+    seller: str = "Dealer",
+    site: Scout24Site = AUTOTRACK,
 ) -> dict[str, Any]:
     listing_id = uuid(number)
     details = [{"data": "12.345 km", "iconName": "mileage_odometer", "ariaLabel": "Kilometerstand"}]
@@ -44,7 +49,7 @@ def search_listing(
         "title": "Tesla Model 3",
         "images": [f"{IMAGE_BASE}/{listing_id}_photo{n}.jpg/250x188.webp" for n in range(2)],
         "price": {"priceFormatted": f"€ {price}", "priceRaw": price},
-        "url": f"/a/tesla-model-3-cat_ma51520mo74665-{listing_id}",
+        "url": f"{site.listing_prefix}tesla-model-3-cat_ma51520mo74665-{listing_id}",
         "vehicle": {
             "make": "Tesla",
             "model": "Model 3",
@@ -53,8 +58,8 @@ def search_listing(
             "fuel": "Elektrisch",
             "jsonLd": {"licensePlate": plate},
         },
-        "location": {"countryCode": "NL", "zip": "8242 BA", "city": "LELYSTAD"},
-        "seller": {"id": "1", "type": "Dealer", "companyName": "EV Dealer B.V."},
+        "location": {"countryCode": country, "zip": "8242 BA", "city": "LELYSTAD"},
+        "seller": {"id": "1", "type": seller, "companyName": "EV Dealer B.V."},
         "tracking": {"firstRegistration": registration, "mileage": "12345", "price": str(price)},
         "vehicleDetails": details,
     }
@@ -116,10 +121,11 @@ def listing_page(number: int, *, price: int = 34950, plate: str = "S-123-AB") ->
     )
 
 
-class FakeAutoTrack:
+class FakeScout24:
     """Serves search pages (queued per page number), listing pages and photos."""
 
-    def __init__(self) -> None:
+    def __init__(self, site: Scout24Site = AUTOTRACK) -> None:
+        self.site = site
         self.search_pages: list[dict[int, str]] = []
         self.listing_pages: dict[str, str | Exception] = {}
         self.requests: list[str] = []
@@ -131,7 +137,7 @@ class FakeAutoTrack:
         if self.error is not None:
             raise self.error
         parts = urlsplit(url)
-        if parts.path.startswith("/a/"):
+        if parts.path.startswith(self.site.listing_prefix):
             listing_id = parts.path.rsplit("-", 5)
             key = "-".join(listing_id[-5:])
             page = self.listing_pages.get(key)

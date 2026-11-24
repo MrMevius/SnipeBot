@@ -10,6 +10,7 @@ Saved searches only watch Marktplaats and are defined by a pasted Marktplaats UR
 - Overview, cheapest listing, listing table and Telegram alerts show the platform when a search covers several.
 - Existing URL-based searches become a single Marktplaats source with their query and state, and can be switched to filters without a new baseline when the filters produce the same query.
 - AutoTrack adapter: search across all result pages (newest first), listings archived like Marktplaats listings, duplicates across platforms marked by license plate.
+- AutoScout24.nl adapter on the same code (NL, BE and DE, private sellers included). It includes all AutoTrack listings under the same ids and replaces AutoTrack in the owner's searches without losing history.
 
 ## Capabilities
 
