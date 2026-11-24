@@ -515,3 +515,154 @@ export async function fetchWatchlistHealth(): Promise<WatchlistHealthResponse> {
   const response = await apiFetch(`${API_BASE_URL}/watchlist/health`);
   return parseResponse<WatchlistHealthResponse>(response);
 }
+
+export type SellerType = "all" | "private" | "business";
+
+export type MarketplaceListingSample = {
+  item_id: string;
+  title: string;
+  url: string;
+  image_url: string | null;
+  price: number | null;
+  price_type: string | null;
+  city: string | null;
+};
+
+export type MarketplaceSearchPreview = {
+  description: string[];
+  warnings: string[];
+  total_count: number;
+  sample: MarketplaceListingSample[];
+};
+
+export type MarketplaceSearch = {
+  id: number;
+  marketplace: string;
+  name: string;
+  source_url: string;
+  description: string[];
+  exclude_keywords: string[];
+  seller_type: SellerType;
+  active: boolean;
+  baseline_done: boolean;
+  last_checked_at: string | null;
+  next_check_at: string | null;
+  last_status: string;
+  last_error_message: string | null;
+  last_total_count: number | null;
+  listing_count: number;
+  new_listing_count: number;
+  created_at: string;
+};
+
+export type MarketplaceSearchCreatePayload = {
+  name: string;
+  url: string;
+  exclude_keywords: string[];
+  seller_type: SellerType;
+};
+
+export type MarketplaceSearchUpdatePayload = {
+  name?: string;
+  exclude_keywords?: string[];
+  seller_type?: SellerType;
+  active?: boolean;
+};
+
+export type MarketplaceListing = {
+  id: number;
+  item_id: string;
+  title: string;
+  url: string;
+  image_url: string | null;
+  price_type: string | null;
+  first_price: number | null;
+  current_price: number | null;
+  city: string | null;
+  distance_km: number | null;
+  seller_type: SellerType | null;
+  attributes: Record<string, string>;
+  is_new: boolean;
+  first_seen_at: string;
+  last_seen_at: string;
+  gone_at: string | null;
+  price_history: { price: number; observed_at: string }[];
+};
+
+export async function previewMarketplaceSearch(
+  url: string,
+  sellerType: SellerType,
+): Promise<MarketplaceSearchPreview> {
+  const response = await apiFetch(`${API_BASE_URL}/searches/preview`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ url, seller_type: sellerType }),
+  });
+  return parseResponse<MarketplaceSearchPreview>(response);
+}
+
+export async function fetchMarketplaceSearches(): Promise<MarketplaceSearch[]> {
+  const response = await apiFetch(`${API_BASE_URL}/searches`);
+  const payload = await parseResponse<{ items: MarketplaceSearch[] }>(response);
+  return payload.items;
+}
+
+export async function fetchMarketplaceSearch(searchId: number): Promise<MarketplaceSearch> {
+  const response = await apiFetch(`${API_BASE_URL}/searches/${searchId}`);
+  return parseResponse<MarketplaceSearch>(response);
+}
+
+export async function createMarketplaceSearch(
+  payload: MarketplaceSearchCreatePayload,
+): Promise<MarketplaceSearch> {
+  const response = await apiFetch(`${API_BASE_URL}/searches`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<MarketplaceSearch>(response);
+}
+
+export async function patchMarketplaceSearch(
+  searchId: number,
+  payload: MarketplaceSearchUpdatePayload,
+): Promise<MarketplaceSearch> {
+  const response = await apiFetch(`${API_BASE_URL}/searches/${searchId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<MarketplaceSearch>(response);
+}
+
+export async function deleteMarketplaceSearch(searchId: number): Promise<void> {
+  const response = await apiFetch(`${API_BASE_URL}/searches/${searchId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    await parseResponse<unknown>(response);
+  }
+}
+
+export async function triggerMarketplaceSearchCheckNow(
+  searchId: number,
+): Promise<MarketplaceSearch> {
+  const response = await apiFetch(`${API_BASE_URL}/searches/${searchId}/check-now`, {
+    method: "POST",
+  });
+  return parseResponse<MarketplaceSearch>(response);
+}
+
+export async function fetchMarketplaceListings(
+  searchId: number,
+): Promise<MarketplaceListing[]> {
+  const response = await apiFetch(`${API_BASE_URL}/searches/${searchId}/listings`);
+  const payload = await parseResponse<{ items: MarketplaceListing[] }>(response);
+  return payload.items;
+}

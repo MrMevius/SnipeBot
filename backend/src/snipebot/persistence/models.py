@@ -2,6 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -189,3 +190,147 @@ class AppSetting(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+class MarketplaceSearch(Base):
+    __tablename__ = "marketplace_searches"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="local", index=True
+    )
+    marketplace: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="marktplaats"
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    query_json: Mapped[str] = mapped_column(Text, nullable=False)
+    description_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    exclude_keywords_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]"
+    )
+    seller_type: Mapped[str] = mapped_column(String(16), nullable=False, default="all")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    baseline_done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Highest numeric listing id known for this search. Unseen listings below
+    # it are older ads that were bumped back to the top, not new ones.
+    id_watermark: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    last_total_count: Mapped[int | None] = mapped_column(nullable=True)
+    last_fetched_count: Mapped[int | None] = mapped_column(nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_check_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    last_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending"
+    )
+    last_error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    consecutive_failure_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    check_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    listings: Mapped[list["MarketplaceListing"]] = relationship(
+        back_populates="search", cascade="all, delete-orphan"
+    )
+    alert_events: Mapped[list["MarketplaceAlertEvent"]] = relationship(
+        back_populates="search", cascade="all, delete-orphan"
+    )
+
+
+class MarketplaceListing(Base):
+    __tablename__ = "marketplace_listings"
+    __table_args__ = (
+        UniqueConstraint("search_id", "item_id", name="uq_marketplace_listing_item"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    search_id: Mapped[int] = mapped_column(
+        ForeignKey("marketplace_searches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    item_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    price_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    first_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    current_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    city: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    distance_meters: Mapped[int | None] = mapped_column(nullable=True)
+    seller_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    attributes_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    from_baseline: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    gone_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    search: Mapped[MarketplaceSearch] = relationship(back_populates="listings")
+    prices: Mapped[list["MarketplaceListingPrice"]] = relationship(
+        back_populates="listing",
+        cascade="all, delete-orphan",
+        order_by="MarketplaceListingPrice.observed_at",
+    )
+
+
+class MarketplaceListingPrice(Base):
+    __tablename__ = "marketplace_listing_prices"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("marketplace_listings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    listing: Mapped[MarketplaceListing] = relationship(back_populates="prices")
+
+
+class MarketplaceAlertEvent(Base):
+    __tablename__ = "marketplace_alert_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    search_id: Mapped[int] = mapped_column(
+        ForeignKey("marketplace_searches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("marketplace_listings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    alert_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    dedup_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False, default="telegram")
+    delivery_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    provider_message_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    search: Mapped[MarketplaceSearch] = relationship(back_populates="alert_events")

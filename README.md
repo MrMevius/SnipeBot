@@ -9,6 +9,16 @@ SnipeBot is a self-hosted price-tracking application with a Docker-first runtime
 - `infra/docker/` — Dockerfiles for backend and frontend
 - `docker-compose.yml` — multi-service local/host deployment definition
 
+## Marktplaats searches
+
+Besides product pages, SnipeBot can watch Marktplaats.nl searches (e.g. a specific car):
+
+1. Set up the search on marktplaats.nl (category, brand/model, year, mileage, price, distance…).
+2. Open **Marktplaats** in SnipeBot, paste the results URL, optionally add exclude words and a seller filter, click **Preview** and compare the filters and count with the website, then **Save search**.
+3. The first check records the current listings silently. Afterwards the worker checks every ~10 minutes and sends a Telegram message (with photo) for each new matching listing and for price drops.
+
+Telegram uses the same notification settings as the watchlist (Settings → Telegram).
+
 ## Prerequisites
 
 - Docker Engine with Compose plugin (`docker compose`)
@@ -54,6 +64,7 @@ Most commonly adjusted variables:
 - `SNIPEBOT_API_PORT`
 - `SNIPEBOT_FRONTEND_PORT`
 - `VITE_API_BASE_URL` (build-time frontend API base; keep `/api` by default)
+- `SNIPEBOT_MARKETPLACE_CHECK_INTERVAL_SECONDS` / `SNIPEBOT_MARKETPLACE_CHECK_JITTER_SECONDS` (Marktplaats search cadence, default 600 ± 60)
 
 Optional PostgreSQL/Timescale profile is available via the `db` service (`docker compose --profile postgres ...`).
 

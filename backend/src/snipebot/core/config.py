@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     dead_letter_failure_threshold: int = 5
     retry_backoff_multiplier: int = 2
     retry_max_interval_seconds: int = 3600
+    marketplace_check_interval_seconds: int = 600
+    marketplace_check_jitter_seconds: int = 60
 
     @property
     def is_sqlite(self) -> bool:
@@ -75,6 +77,12 @@ def get_settings() -> Settings:
         ),
         retry_max_interval_seconds=int(
             _get_env("SNIPEBOT_RETRY_MAX_INTERVAL_SECONDS", "3600")
+        ),
+        marketplace_check_interval_seconds=int(
+            _get_env("SNIPEBOT_MARKETPLACE_CHECK_INTERVAL_SECONDS", "600")
+        ),
+        marketplace_check_jitter_seconds=int(
+            _get_env("SNIPEBOT_MARKETPLACE_CHECK_JITTER_SECONDS", "60")
         ),
     )
 

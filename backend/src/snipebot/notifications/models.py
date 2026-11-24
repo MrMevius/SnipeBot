@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class NotificationMessage:
     title: str
     body: str
+    photo_url: str | None = None
 
     @property
     def text(self) -> str:

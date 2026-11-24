@@ -90,3 +90,52 @@ def test_telegram_notifier_http_error_returns_telegram_description(monkeypatch) 
 
     assert result.ok is False
     assert result.error == "bot was blocked by the user"
+
+
+def test_telegram_notifier_sends_photo_with_caption(monkeypatch) -> None:
+    captured = []
+
+    def _fake_urlopen(request, timeout: int):
+        captured.append((request.full_url, parse_qs(request.data.decode("utf-8"))))
+        return _FakeResponse('{"ok":true,"result":{"message_id":8}}')
+
+    monkeypatch.setattr("snipebot.notifications.telegram.urlopen", _fake_urlopen)
+    notifier = TelegramNotifier(bot_token="abc123", chat_id="chat-42")
+
+    result = notifier.send(
+        NotificationMessage(title="🆕 New", body="Golf", photo_url="https://img.test/1.jpg")
+    )
+
+    assert result.ok is True
+    assert result.provider_message_id == "8"
+    assert captured == [
+        (
+            "https://api.telegram.org/botabc123/sendPhoto",
+            {
+                "chat_id": ["chat-42"],
+                "photo": ["https://img.test/1.jpg"],
+                "caption": ["🆕 New\nGolf"],
+            },
+        )
+    ]
+
+
+def test_telegram_notifier_falls_back_to_text_when_photo_fails(monkeypatch) -> None:
+    urls = []
+
+    def _fake_urlopen(request, timeout: int):
+        urls.append(request.full_url)
+        if request.full_url.endswith("/sendPhoto"):
+            return _FakeResponse('{"ok":false,"description":"wrong file identifier"}')
+        return _FakeResponse('{"ok":true,"result":{"message_id":9}}')
+
+    monkeypatch.setattr("snipebot.notifications.telegram.urlopen", _fake_urlopen)
+    notifier = TelegramNotifier(bot_token="t", chat_id="c")
+
+    result = notifier.send(
+        NotificationMessage(title="A", body="B", photo_url="https://img.test/broken.jpg")
+    )
+
+    assert result.ok is True
+    assert result.provider_message_id == "9"
+    assert [url.rsplit("/", 1)[1] for url in urls] == ["sendPhoto", "sendMessage"]
