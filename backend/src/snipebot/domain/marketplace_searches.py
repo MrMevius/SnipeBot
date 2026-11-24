@@ -35,6 +35,7 @@ from snipebot.adapters.marketplaces.marktplaats import (
 )
 from snipebot.core.config import Settings
 from snipebot.core.metrics import metrics
+from snipebot.domain.marketplace_archive import mark_listings_missing, observe_listings
 from snipebot.domain.price_checks import resolve_notification_settings
 from snipebot.notifications.factory import build_notifier
 from snipebot.notifications.models import NotificationMessage
@@ -441,8 +442,12 @@ def check_search(
                 _AlertIntent(kind="price_drop", row=row, listing=listing, old_price=old_price)
             )
 
+    if settings.marketplace_archive_enabled:
+        observe_listings(db_session, search, matching, now)
+
     if page.total_count <= len(page.listings):
         # The page holds the complete result set, so anything missing is gone.
+        missing: list[str] = []
         for row in db_session.scalars(
             select(MarketplaceListing).where(
                 MarketplaceListing.search_id == search.id,
@@ -451,6 +456,9 @@ def check_search(
         ).all():
             if row.item_id not in page_ids:
                 row.gone_at = now
+                missing.append(row.item_id)
+        if settings.marketplace_archive_enabled:
+            mark_listings_missing(db_session, missing, now)
 
     ids = [value for listing in page.listings if (value := listing.numeric_id) is not None]
     if ids:

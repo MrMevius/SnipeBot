@@ -615,9 +615,25 @@ function SearchDetail({
                           <img className="product-thumb" src={listing.image_url} alt="" loading="lazy" />
                         ) : null}
                         <div>
-                          <a href={listing.url} target="_blank" rel="noreferrer" className="product-link">
-                            {listing.title}
-                          </a>
+                          {listing.archive_id ? (
+                            <a
+                              href={`/archive/${listing.archive_id}`}
+                              className="product-link"
+                              onClick={(event) => {
+                                if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) {
+                                  return;
+                                }
+                                event.preventDefault();
+                                onNavigate(`/archive/${listing.archive_id}`);
+                              }}
+                            >
+                              {listing.title}
+                            </a>
+                          ) : (
+                            <a href={listing.url} target="_blank" rel="noreferrer" className="product-link">
+                              {listing.title}
+                            </a>
+                          )}
                           {listing.is_new && <span className="pill search-new-pill">new</span>}
                           {listing.gone_at && <span className="pill">gone</span>}
                         </div>

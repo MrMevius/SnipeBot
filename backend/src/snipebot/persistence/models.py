@@ -334,3 +334,133 @@ class MarketplaceAlertEvent(Base):
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     search: Mapped[MarketplaceSearch] = relationship(back_populates="alert_events")
+
+
+class MarketplaceItem(Base):
+    """Archived marketplace listing, kept independently of the searches."""
+
+    __tablename__ = "marketplace_items"
+    __table_args__ = (
+        UniqueConstraint("marketplace", "item_id", name="uq_marketplace_item"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    marketplace: Mapped[str] = mapped_column(String(32), nullable=False)
+    item_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Title as last seen in search results; a change there triggers a re-fetch.
+    listing_title: Mapped[str] = mapped_column(String(512), nullable=False)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    price_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    city: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    postcode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    category_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    summary_attributes_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="{}"
+    )
+    description_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attribute_groups_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    seller_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    stats_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    highlights_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    is_reserved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    gone_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_fetch_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    fetch_failure_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    last_error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    versions: Mapped[list["MarketplaceItemVersion"]] = relationship(
+        back_populates="item",
+        cascade="all, delete-orphan",
+        order_by="MarketplaceItemVersion.fetched_at",
+    )
+    images: Mapped[list["MarketplaceItemImage"]] = relationship(
+        back_populates="item",
+        cascade="all, delete-orphan",
+        order_by="MarketplaceItemImage.position",
+    )
+    prices: Mapped[list["MarketplaceItemPrice"]] = relationship(
+        back_populates="item",
+        cascade="all, delete-orphan",
+        order_by="MarketplaceItemPrice.observed_at",
+    )
+
+
+class MarketplaceItemVersion(Base):
+    __tablename__ = "marketplace_item_versions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("marketplace_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    snapshot_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+    item: Mapped[MarketplaceItem] = relationship(back_populates="versions")
+
+
+class MarketplaceItemImage(Base):
+    __tablename__ = "marketplace_item_images"
+    __table_args__ = (
+        UniqueConstraint("item_id", "source_key", name="uq_marketplace_item_image"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("marketplace_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(255), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(nullable=False)
+    position: Mapped[int] = mapped_column(nullable=False, default=0)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    removed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    item: Mapped[MarketplaceItem] = relationship(back_populates="images")
+
+
+class MarketplaceItemPrice(Base):
+    __tablename__ = "marketplace_item_prices"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("marketplace_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    item: Mapped[MarketplaceItem] = relationship(back_populates="prices")

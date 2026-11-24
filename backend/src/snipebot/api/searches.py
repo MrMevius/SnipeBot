@@ -17,6 +17,7 @@ from snipebot.api.deps import (
     get_request_identity,
 )
 from snipebot.core.metrics import metrics
+from snipebot.domain.marketplace_archive import archive_ids_for
 from snipebot.domain.marketplace_searches import (
     create_search,
     delete_search,
@@ -126,6 +127,7 @@ class ListingResponse(BaseModel):
     last_seen_at: datetime
     gone_at: datetime | None
     price_history: list[ListingPricePointResponse]
+    archive_id: int | None = None
 
 
 class ListingListResponse(BaseModel):
@@ -173,7 +175,9 @@ def _sample_response(listing: Listing) -> ListingSampleResponse:
     )
 
 
-def _listing_response(row: MarketplaceListing, now: datetime) -> ListingResponse:
+def _listing_response(
+    row: MarketplaceListing, now: datetime, archive_id: int | None = None
+) -> ListingResponse:
     return ListingResponse(
         id=row.id,
         item_id=row.item_id,
@@ -197,6 +201,7 @@ def _listing_response(row: MarketplaceListing, now: datetime) -> ListingResponse
             ListingPricePointResponse(price=float(point.price), observed_at=point.observed_at)
             for point in row.prices
         ],
+        archive_id=archive_id,
     )
 
 
@@ -337,7 +342,11 @@ def get_listings(
 ) -> ListingListResponse:
     search = _get_owned_search(db_session, identity, search_id)
     now = datetime.now(UTC)
+    rows = list_search_listings(db_session, search)
+    archive_ids = archive_ids_for(
+        db_session, owner_id=identity.owner_id, item_ids=[row.item_id for row in rows]
+    )
     return ListingListResponse(
         search_id=search.id,
-        items=[_listing_response(row, now) for row in list_search_listings(db_session, search)],
+        items=[_listing_response(row, now, archive_ids.get(row.item_id)) for row in rows],
     )

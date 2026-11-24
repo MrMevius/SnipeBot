@@ -1,4 +1,5 @@
 import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ArchivePage } from "./ArchivePage";
 import { SearchesPage } from "./SearchesPage";
 import {
   archiveWatchItem,
@@ -358,7 +359,7 @@ function deriveProductName(label: string | null | undefined, url: string): strin
   }
 }
 
-function TrendChart({
+export function TrendChart({
   points,
   width,
   height,
@@ -679,7 +680,8 @@ type Route =
   | { kind: "overview" }
   | { kind: "add-product" }
   | { kind: "detail"; itemId: number }
-  | { kind: "searches"; searchId: number | null };
+  | { kind: "searches"; searchId: number | null }
+  | { kind: "archive"; archiveId: number | null };
 
 type SettingsFormState = {
   notificationsEnabled: boolean;
@@ -712,7 +714,7 @@ type BulkAction = BulkWatchItemPayload["action"];
 type MenuView = "watchlist" | "supported-shops" | "stats" | "settings";
 type SortableColumn = "product" | "site" | "target" | "current" | "status";
 type RowDensity = "compact" | "comfortable";
-type GlobalMenuKey = MenuView | "add-product" | "searches";
+type GlobalMenuKey = MenuView | "add-product" | "searches" | "archive";
 
 type GlobalMenuItem = {
   key: GlobalMenuKey;
@@ -801,6 +803,10 @@ function parseRoute(pathname: string): Route {
   const searchMatch = pathname.match(/^\/searches(?:\/(\d+))?\/?$/);
   if (searchMatch) {
     return { kind: "searches", searchId: searchMatch[1] ? Number(searchMatch[1]) : null };
+  }
+  const archiveMatch = pathname.match(/^\/archive(?:\/(\d+))?\/?$/);
+  if (archiveMatch) {
+    return { kind: "archive", archiveId: archiveMatch[1] ? Number(archiveMatch[1]) : null };
   }
   return { kind: "overview" };
 }
@@ -1053,6 +1059,16 @@ function ProductDetailPage({
       onClick: (event) => {
         event.preventDefault();
         onNavigate("/searches");
+      },
+    },
+    {
+      key: "archive",
+      label: "Archive",
+      href: "/archive",
+      active: false,
+      onClick: (event) => {
+        event.preventDefault();
+        onNavigate("/archive");
       },
     },
     {
@@ -1363,6 +1379,16 @@ export function App() {
       onClick: (event) => {
         event.preventDefault();
         navigate("/searches");
+      },
+    },
+    {
+      key: "archive",
+      label: "Archive",
+      href: "/archive",
+      active: route.kind === "archive",
+      onClick: (event) => {
+        event.preventDefault();
+        navigate("/archive");
       },
     },
     {
@@ -1799,6 +1825,22 @@ export function App() {
         menuOpen={menuOpen}
         onToggleMenu={() => setMenuOpen((previous) => !previous)}
         onSelectMenuView={selectOverviewView}
+      />
+    );
+  }
+
+  if (route.kind === "archive") {
+    return (
+      <ArchivePage
+        archiveId={route.archiveId}
+        onNavigate={navigate}
+        menubar={
+          <GlobalTopMenubar
+            items={globalMenuItems}
+            menuOpen={menuOpen}
+            onToggleMenu={() => setMenuOpen((previous) => !previous)}
+          />
+        }
       />
     );
   }

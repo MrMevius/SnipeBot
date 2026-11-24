@@ -1,11 +1,13 @@
 from fastapi import APIRouter
 
+from .archive import router as archive_router
 from .health import router as health_router
 from .searches import router as searches_router
 from .settings import router as settings_router
 from .watchlist import router as watchlist_router
 
 router = APIRouter()
+router.include_router(archive_router)
 router.include_router(health_router)
 router.include_router(searches_router)
 router.include_router(settings_router)

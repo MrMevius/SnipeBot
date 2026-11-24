@@ -120,13 +120,93 @@ def page_html(original_request: dict[str, Any] | None = None) -> str:
     )
 
 
+def listing_page_html(
+    number: int,
+    *,
+    title: str | None = None,
+    price_cents: int = 1500000,
+    description: str = "<strong>Nette auto</strong><br />Eerste eigenaar.",
+    images: tuple[str, ...] = ("a", "b"),
+    car: bool = True,
+    seller_name: str = "Testverkoper",
+) -> str:
+    """A listing page with ``window.__CONFIG__`` data and rendered markup."""
+    item_id = f"m{number}"
+    listing_data: dict[str, Any] = {
+        "itemId": item_id,
+        "title": title or f"Volkswagen Golf {number}",
+        "priceInfo": {"priceCents": price_cents, "priceType": "FIXED"},
+        "category": {"id": 157, "name": "Volkswagen", "parentName": "Auto's"},
+        "gallery": {
+            "imageUrls": [],
+            "media": {
+                "imageSizes": {"XXL": "85"},
+                "images": [
+                    {
+                        "mediaId": f"media-{key}",
+                        "base": f"//images.marktplaats.com/api/v1/listing/images/{key}?rule=ecg_mp_eps$_#.jpg",
+                    }
+                    for key in images
+                ],
+            },
+        },
+        "seller": {
+            "id": 1,
+            "name": seller_name,
+            "sellerType": "CONSUMER",
+            "sellerProfileUrl": "/u/testverkoper/1/",
+            "activeSinceDiff": "2 jaar",
+            "phoneNumber": "0600000000",
+            "phoneNumberHidden": True,
+            "location": {"cityName": "Almelo", "postcode": "7600AA"},
+        },
+        "stats": {"viewCount": 12, "favoritedCount": 1, "since": "2026-11-20T10:00:00Z"},
+        "highlights": [{"key": "Eerste eigenaar"}],
+        "isReserved": False,
+    }
+    if car:
+        listing_data["carAttributes"] = {
+            "groupedWithIcons": [
+                {"key": "Main", "attributes": [{"key": "mileage", "label": "Kilometerstand", "value": "64.500", "unit": "km"}]},
+                {
+                    "key": "Basics",
+                    "attributes": [
+                        {"key": "constructionYear", "label": "Bouwjaar", "value": 2021},
+                        {"key": "mileage", "label": "Kilometerstand", "value": "64.500", "unit": "km"},
+                    ],
+                },
+                {"key": "Options", "attributes": [{"key": "options", "label": "Opties", "values": ["ABS", "Cruise Control"]}]},
+            ]
+        }
+    attributes_html = (
+        ""
+        if car
+        else '<div class="Attributes-module-root"><div class="Attributes-module-list">'
+        '<div class="Attributes-module-item"><div class="Attributes-module-label">Conditie</div>'
+        '<div class="Attributes-module-value">Gebruikt</div></div>'
+        '<div class="Attributes-module-item"><div class="Attributes-module-label">Merk</div>'
+        '<div class="Attributes-module-value"><a href="/l/x/">Gazelle</a></div></div></div></div>'
+    )
+    return (
+        "<html><head><script>window.__ENV_CONFIG__ = {};</script></head><body>"
+        f'<div class="Description-module-description"><div data-collapsable="description">{description}</div></div>'
+        f"{attributes_html}"
+        f"<script>window.__CONFIG__ = {json.dumps({'listing': listing_data})};</script>"
+        "</body></html>"
+    )
+
+
 class FakeFetcher:
-    """Serves the page HTML for result pages and queued API payloads."""
+    """Serves result pages, queued API payloads and listing pages.
+
+    ``listing_pages`` maps item ids to page HTML or to an exception to raise.
+    """
 
     def __init__(self, html: str | None = None) -> None:
         self.html = html or page_html()
         self.payloads: list[dict[str, Any]] = []
         self.default_payload: dict[str, Any] = search_payload([])
+        self.listing_pages: dict[str, str | Exception] = {}
         self.requests: list[str] = []
         self.error: Exception | None = None
 
@@ -137,7 +217,29 @@ class FakeFetcher:
         if "/lrp/api/search" in url:
             payload = self.payloads.pop(0) if self.payloads else self.default_payload
             return json.dumps(payload)
+        if "/v/" in url:
+            item_id = url.rsplit("/", 1)[-1].split("-", 1)[0]
+            page = self.listing_pages.get(item_id)
+            if page is None:
+                page = listing_page_html(int(item_id[1:]))
+            if isinstance(page, Exception):
+                raise page
+            return page
         return self.html
+
+
+class FakeImages:
+    """Returns distinct image bytes per URL; ``error`` is raised when set."""
+
+    def __init__(self) -> None:
+        self.requests: list[str] = []
+        self.error: Exception | None = None
+
+    def __call__(self, url: str) -> bytes:
+        self.requests.append(url)
+        if self.error is not None:
+            raise self.error
+        return f"jpeg:{url}".encode()
 
 
 class CollectingNotifier:

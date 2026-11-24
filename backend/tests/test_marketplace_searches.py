@@ -34,6 +34,10 @@ def _reset_tables() -> None:
     init_db()
     with get_engine().begin() as connection:
         for table in (
+            "marketplace_item_prices",
+            "marketplace_item_images",
+            "marketplace_item_versions",
+            "marketplace_items",
             "marketplace_alert_events",
             "marketplace_listing_prices",
             "marketplace_listings",

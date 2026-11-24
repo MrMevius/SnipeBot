@@ -53,8 +53,8 @@ Fetcher = Callable[[str, str], str]
 class MarktplaatsError(Exception):
     """Raised for invalid search URLs and failed or unparsable responses.
 
-    ``kind`` is one of ``invalid_url``, ``fetch_error``, ``blocked`` or
-    ``parse_error``.
+    ``kind`` is one of ``invalid_url``, ``fetch_error``, ``blocked``,
+    ``parse_error`` or ``gone`` (HTTP 410 for a removed listing).
     """
 
     def __init__(self, kind: str, message: str) -> None:
@@ -428,6 +428,8 @@ def _http_fetch(url: str, accept: str) -> str:
         kind = "blocked" if exc.code in {403, 429} else "fetch_error"
         if exc.code == 404:
             raise MarktplaatsError("invalid_url", "Marktplaats page not found") from exc
+        if exc.code == 410:
+            raise MarktplaatsError("gone", "Marktplaats listing was removed") from exc
         raise MarktplaatsError(kind, f"Marktplaats returned HTTP {exc.code}") from exc
     except OSError as exc:
         raise MarktplaatsError("fetch_error", f"Marktplaats request failed: {exc}") from exc
