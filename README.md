@@ -9,14 +9,20 @@ SnipeBot is a self-hosted price-tracking application with a Docker-first runtime
 - `infra/docker/` — Dockerfiles for backend and frontend
 - `docker-compose.yml` — multi-service local/host deployment definition
 
-## Marktplaats searches
+## Car searches (Marktplaats and more)
 
-Besides product pages, SnipeBot can watch Marktplaats.nl searches (e.g. a specific car):
+Besides product pages, SnipeBot can watch car searches on several platforms at once (currently Marktplaats.nl):
 
-1. Set up the search on marktplaats.nl (category, brand/model, year, mileage, price, distance…).
-2. Open **Marktplaats** in SnipeBot, paste the results URL, optionally add exclude words and a seller filter, click **Preview** and compare the filters and count with the website, then **Save search**.
-3. The first check records the current listings silently. Afterwards the worker checks every ~10 minutes and sends a Telegram message (with photo) for each new matching listing and for price drops.
+1. Open **Searches**, choose a make and model (the lists come from the platforms; a platform that lacks the model is greyed out), tick the platforms and set the filters you need: year, price, mileage, minimum range and battery capacity.
+2. Optionally add exclude words and a seller filter, click **Preview** and compare the count per platform with the websites, then **Save search**.
+3. The first check of each platform records the current listings silently. Afterwards the worker checks every ~10 minutes per platform and sends a Telegram message (with photo) for each new matching listing and for price drops. When a search covers several platforms, the message names the platform.
 4. Set an **alert price ceiling** per search: Telegram only alerts for new listings and price drops at or below it (listings without a price never alert). Without a ceiling the search records and archives listings but sends no alerts.
+
+A filter a platform cannot apply itself is checked by SnipeBot against the listing data. Listings that do not state the value (e.g. no battery capacity) are kept and marked "unknown" in the list and in the Telegram message.
+
+Each platform is an adapter (`backend/src/snipebot/adapters/marketplaces/`) implementing `PlatformAdapter`: it lists makes and models, turns the filters into a platform query (reporting the filters it cannot apply) and runs that query.
+
+Searches created earlier from a pasted Marktplaats URL keep working; choose a make and model on the search page to switch them to filters and add platforms.
 
 Telegram uses the same notification settings as the watchlist (Settings → Telegram).
 
@@ -74,7 +80,7 @@ Most commonly adjusted variables:
 - `SNIPEBOT_API_PORT`
 - `SNIPEBOT_FRONTEND_PORT`
 - `VITE_API_BASE_URL` (build-time frontend API base; keep `/api` by default)
-- `SNIPEBOT_MARKETPLACE_CHECK_INTERVAL_SECONDS` / `SNIPEBOT_MARKETPLACE_CHECK_JITTER_SECONDS` (Marktplaats search cadence, default 600 ± 60)
+- `SNIPEBOT_MARKETPLACE_CHECK_INTERVAL_SECONDS` / `SNIPEBOT_MARKETPLACE_CHECK_JITTER_SECONDS` (search cadence per platform, default 600 ± 60)
 - `SNIPEBOT_MARKETPLACE_ARCHIVE_ENABLED` (default `true`), `SNIPEBOT_MARKETPLACE_ARCHIVE_DIR` (default `/data/archive`), `SNIPEBOT_MARKETPLACE_ARCHIVE_IMAGE_SIZE` (default `original`; or a Marktplaats size code such as `85` = XXL), `SNIPEBOT_MARKETPLACE_ARCHIVE_DELAY_SECONDS` (default 3), `SNIPEBOT_MARKETPLACE_ARCHIVE_TICK_BUDGET_SECONDS` (default 45), `SNIPEBOT_MARKETPLACE_ARCHIVE_REFRESH_DAYS` (default 7)
 
 Optional PostgreSQL/Timescale profile is available via the `db` service (`docker compose --profile postgres ...`).

@@ -1053,7 +1053,7 @@ function ProductDetailPage({
     },
     {
       key: "searches",
-      label: "Marktplaats",
+      label: "Searches",
       href: "/searches",
       active: false,
       onClick: (event) => {
@@ -1373,7 +1373,7 @@ export function App() {
     },
     {
       key: "searches",
-      label: "Marktplaats",
+      label: "Searches",
       href: "/searches",
       active: route.kind === "searches",
       onClick: (event) => {

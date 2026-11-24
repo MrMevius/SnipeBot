@@ -6,14 +6,38 @@ import { App } from "./App";
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
-const SEARCH_URL = "https://www.marktplaats.nl/l/auto-s/volkswagen/f/golf/1260/#postcode:7671AB";
+const GOLF_FILTERS = {
+  make: "Volkswagen",
+  model: "Golf",
+  year_min: 2018,
+  year_max: null,
+  price_min: null,
+  price_max: 25000,
+  mileage_min: null,
+  mileage_max: 100000,
+  range_min: null,
+  battery_min: null,
+  battery_max: null,
+};
+
+const source = (marketplace: string, label: string) => ({
+  marketplace,
+  label,
+  post_filters: marketplace === "autotrack" ? ["battery"] : [],
+  baseline_done: true,
+  last_checked_at: "2026-11-23T10:00:00Z",
+  next_check_at: "2026-11-23T10:10:00Z",
+  last_status: "ok",
+  last_error_message: null,
+  last_total_count: 43,
+});
 
 const savedSearch = {
   id: 7,
-  marketplace: "marktplaats",
   name: "Golf GTI",
-  source_url: SEARCH_URL,
-  description: ["Categorie: Auto's › Volkswagen", "Model: Golf"],
+  filters: GOLF_FILTERS,
+  platforms: [source("marktplaats", "Marktplaats"), source("autotrack", "AutoTrack")],
+  description: ["Auto: Volkswagen Golf", "Bouwjaar: vanaf 2018"],
   exclude_keywords: ["schade"],
   seller_type: "private",
   alert_max_price: 45000,
@@ -28,6 +52,7 @@ const savedSearch = {
   new_listing_count: 1,
   cheapest: {
     item_id: "m300",
+    marketplace: "marktplaats",
     title: "Volkswagen Golf 300",
     url: "https://www.marktplaats.nl/v/m300",
     price: 21000,
@@ -40,8 +65,35 @@ function jsonResponse(payload: unknown, status = 200) {
   return { ok: status < 400, status, json: async () => payload };
 }
 
-// App loads the watchlist and settings in the background on every route.
+// App loads the watchlist and settings in the background on every route;
+// the search form loads platforms, makes and models.
 function backgroundResponse(url: string) {
+  if (url.endsWith("/searches/platforms")) {
+    return jsonResponse({
+      items: [
+        { key: "marktplaats", label: "Marktplaats" },
+        { key: "autotrack", label: "AutoTrack" },
+      ],
+    });
+  }
+  if (url.endsWith("/searches/makes")) {
+    return jsonResponse({
+      items: [
+        { label: "Tesla", platforms: ["marktplaats", "autotrack"] },
+        { label: "Volkswagen", platforms: ["marktplaats", "autotrack"] },
+      ],
+      warnings: [],
+    });
+  }
+  if (url.includes("/searches/models?make=Volkswagen")) {
+    return jsonResponse({
+      items: [
+        { label: "Golf", platforms: ["marktplaats", "autotrack"] },
+        { label: "Up!", platforms: ["marktplaats"] },
+      ],
+      warnings: [],
+    });
+  }
   if (url.endsWith("/settings")) {
     return jsonResponse({
       notifications_enabled: false,
@@ -79,33 +131,52 @@ describe("Marktplaats searches", () => {
 
   it("previews before saving a search", async () => {
     const searches: unknown[] = [];
+    const expectedPayload = {
+      filters: { ...GOLF_FILTERS, price_max: 25000 },
+      platforms: ["marktplaats", "autotrack"],
+      seller_type: "private",
+      exclude_keywords: ["schade", "export"],
+    };
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/searches/preview")) {
-        expect(JSON.parse(String(init?.body))).toEqual({ url: SEARCH_URL, seller_type: "private" });
+        expect(JSON.parse(String(init?.body))).toEqual(expectedPayload);
         return jsonResponse({
-          description: ["Categorie: Auto's › Volkswagen", "Adverteerder: Particulier"],
-          warnings: [],
-          total_count: 86,
-          sample: [
+          description: ["Auto: Volkswagen Golf", "Verkoper: Particulier"],
+          platforms: [
             {
-              item_id: "m1",
-              title: "Volkswagen Golf GTI",
-              url: "https://www.marktplaats.nl/v/m1",
-              image_url: null,
-              price: 21000,
-              price_type: "FIXED",
-              city: "Almelo",
+              marketplace: "marktplaats",
+              label: "Marktplaats",
+              total_count: 86,
+              post_filters: [],
+              error: null,
+              sample: [
+                {
+                  item_id: "m1",
+                  title: "Volkswagen Golf GTI",
+                  url: "https://www.marktplaats.nl/v/m1",
+                  image_url: null,
+                  price: 21000,
+                  price_type: "FIXED",
+                  city: "Almelo",
+                },
+              ],
+            },
+            {
+              marketplace: "autotrack",
+              label: "AutoTrack",
+              total_count: 12,
+              post_filters: ["battery"],
+              error: null,
+              sample: [],
             },
           ],
         });
       }
       if (url.endsWith("/searches") && init?.method === "POST") {
         expect(JSON.parse(String(init.body))).toEqual({
+          ...expectedPayload,
           name: "Golf GTI",
-          url: SEARCH_URL,
-          exclude_keywords: ["schade", "export"],
-          seller_type: "private",
           alert_max_price: 45000,
         });
         searches.push(savedSearch);
@@ -125,7 +196,19 @@ describe("Marktplaats searches", () => {
     expect(save.disabled).toBe(true);
 
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Golf GTI" } });
-    fireEvent.change(screen.getByLabelText("Search URL"), { target: { value: SEARCH_URL } });
+    await screen.findByRole("option", { name: "Volkswagen" });
+    fireEvent.change(screen.getByLabelText("Make"), { target: { value: "Volkswagen" } });
+    await screen.findByRole("option", { name: "Up!" });
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "Up!" } });
+    // Up! is only on Marktplaats.
+    expect((screen.getByLabelText(/^AutoTrack/) as HTMLInputElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "Golf" } });
+    expect((screen.getByLabelText(/^AutoTrack/) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(/^Marktplaats/) as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.change(screen.getByLabelText("Year from"), { target: { value: "2018" } });
+    fireEvent.change(screen.getByLabelText("Price (€) to"), { target: { value: "25.000" } });
+    fireEvent.change(screen.getByLabelText("Mileage (km) to"), { target: { value: "100.000" } });
     fireEvent.change(screen.getByLabelText("Exclude words (comma separated)"), {
       target: { value: "schade, export," },
     });
@@ -135,17 +218,20 @@ describe("Marktplaats searches", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
 
-    expect(await screen.findByText("86 listings match")).toBeTruthy();
-    expect(screen.getByText("Adverteerder: Particulier")).toBeTruthy();
+    expect(await screen.findByText("Marktplaats: 86 listings match")).toBeTruthy();
+    expect(screen.getByTestId("preview-autotrack").textContent).toContain(
+      "SnipeBot checks battery capacity itself",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Save search" }));
 
     expect(await screen.findByText("Saved search “Golf GTI”.")).toBeTruthy();
     const row = (await screen.findByTestId("search-row-7")).textContent ?? "";
     expect(row).toContain("1 new");
+    expect(row).toContain("Marktplaats + AutoTrack");
     expect(row.replace(/\s/g, " ")).toContain("Alerts ≤ € 45.000");
     const cheapest = screen.getByTestId("search-cheapest-7");
-    expect(cheapest.textContent?.replace(/\s/g, " ")).toContain("€ 21.000");
+    expect(cheapest.textContent?.replace(/\s/g, " ")).toContain("€ 21.000 · Marktplaats");
     expect(cheapest.querySelector("a")?.getAttribute("href")).toBe("/archive/3");
   });
 
@@ -158,6 +244,8 @@ describe("Marktplaats searches", () => {
           items: [
             {
               id: 1,
+              marketplace: "autotrack",
+              unverified_filters: ["battery"],
               item_id: "m300",
               title: "Volkswagen Golf 300",
               url: "https://www.marktplaats.nl/v/m300",
@@ -198,6 +286,11 @@ describe("Marktplaats searches", () => {
     expect(text.replace(/\s/g, " ")).toContain("64.500 km");
     expect(text).toContain("Benzine");
     expect(text).toContain("Almelo (12 km)");
+    expect(text).toContain("AutoTrack");
+    expect(text).toContain("battery capacity unknown");
+    expect(screen.getByTestId("source-autotrack").textContent).toContain("SnipeBot checks battery capacity itself");
+    await waitFor(() => expect((screen.getByLabelText("Model") as HTMLSelectElement).value).toBe("Golf"));
+    expect((screen.getByLabelText("Year from") as HTMLInputElement).value).toBe("2018");
     await waitFor(() =>
       expect(
         (screen.getByLabelText("Exclude words (comma separated)") as HTMLInputElement).value,
@@ -219,6 +312,8 @@ describe("Marktplaats searches", () => {
       last_seen_at: "2026-11-23T10:00:00Z",
       gone_at: null,
       price_history: [],
+      marketplace: "marktplaats",
+      unverified_filters: [],
     };
     const items = [
       { ...base, id: 1, item_id: "m1", title: "B car", current_price: 30000,

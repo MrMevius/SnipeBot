@@ -165,7 +165,10 @@ def backfill_items(db_session: Session) -> int:
     rows = db_session.execute(
         select(MarketplaceListing, MarketplaceSearch.owner_id)
         .join(MarketplaceSearch, MarketplaceSearch.id == MarketplaceListing.search_id)
-        .where(MarketplaceListing.item_id.not_in(archived))
+        .where(
+            MarketplaceListing.marketplace == MARKETPLACE,
+            MarketplaceListing.item_id.not_in(archived),
+        )
         .order_by(MarketplaceListing.first_seen_at.asc())
     ).all()
     created: dict[str, MarketplaceItem] = {}

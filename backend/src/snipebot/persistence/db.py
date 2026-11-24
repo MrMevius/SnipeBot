@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from snipebot.core.config import get_settings
 from snipebot.persistence.first_price import BACKFILL_FIRST_PRICE
 from snipebot.persistence.models import Base
+from snipebot.persistence.search_sources import COPY_LEGACY_SEARCH_SOURCES
 
 _engine = None
 _SessionLocal = None
@@ -136,3 +137,28 @@ def _ensure_legacy_columns() -> None:
                     "ALTER TABLE marketplace_searches ADD COLUMN alert_max_price NUMERIC(12, 2)"
                 )
             )
+        if "filters_json" not in search_columns:
+            connection.execute(
+                text("ALTER TABLE marketplace_searches ADD COLUMN filters_json TEXT")
+            )
+
+        listing_rows = connection.execute(
+            text("PRAGMA table_info('marketplace_listings')")
+        ).fetchall()
+        listing_columns = {row[1] for row in listing_rows}
+        if "marketplace" not in listing_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE marketplace_listings ADD COLUMN marketplace VARCHAR(32) "
+                    "NOT NULL DEFAULT 'marktplaats'"
+                )
+            )
+        if "unverified_filters_json" not in listing_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE marketplace_listings ADD COLUMN unverified_filters_json TEXT "
+                    "NOT NULL DEFAULT '[]'"
+                )
+            )
+
+        connection.execute(text(COPY_LEGACY_SEARCH_SOURCES))

@@ -528,18 +528,57 @@ export type MarketplaceListingSample = {
   city: string | null;
 };
 
+export type SearchFilters = {
+  make: string;
+  model: string;
+  year_min: number | null;
+  year_max: number | null;
+  price_min: number | null;
+  price_max: number | null;
+  mileage_min: number | null;
+  mileage_max: number | null;
+  range_min: number | null;
+  battery_min: number | null;
+  battery_max: number | null;
+};
+
+export type PlatformInfo = { key: string; label: string };
+
+export type TaxonomyOption = { label: string; platforms: string[] };
+
+export type TaxonomyOptions = { items: TaxonomyOption[]; warnings: string[] };
+
+export type PlatformPreview = {
+  marketplace: string;
+  label: string;
+  total_count: number | null;
+  post_filters: string[];
+  sample: MarketplaceListingSample[];
+  error: string | null;
+};
+
 export type MarketplaceSearchPreview = {
   description: string[];
-  warnings: string[];
-  total_count: number;
-  sample: MarketplaceListingSample[];
+  platforms: PlatformPreview[];
+};
+
+export type SearchSource = {
+  marketplace: string;
+  label: string;
+  post_filters: string[];
+  baseline_done: boolean;
+  last_checked_at: string | null;
+  next_check_at: string | null;
+  last_status: string;
+  last_error_message: string | null;
+  last_total_count: number | null;
 };
 
 export type MarketplaceSearch = {
   id: number;
-  marketplace: string;
   name: string;
-  source_url: string;
+  filters: SearchFilters | null;
+  platforms: SearchSource[];
   description: string[];
   exclude_keywords: string[];
   seller_type: SellerType;
@@ -555,6 +594,7 @@ export type MarketplaceSearch = {
   new_listing_count: number;
   cheapest: {
     item_id: string;
+    marketplace: string;
     title: string;
     url: string;
     price: number;
@@ -563,11 +603,15 @@ export type MarketplaceSearch = {
   created_at: string;
 };
 
-export type MarketplaceSearchCreatePayload = {
-  name: string;
-  url: string;
-  exclude_keywords: string[];
+export type MarketplaceSearchPreviewPayload = {
+  filters: SearchFilters;
+  platforms: string[];
   seller_type: SellerType;
+  exclude_keywords: string[];
+};
+
+export type MarketplaceSearchCreatePayload = MarketplaceSearchPreviewPayload & {
+  name: string;
   alert_max_price: number | null;
 };
 
@@ -577,10 +621,13 @@ export type MarketplaceSearchUpdatePayload = {
   seller_type?: SellerType;
   active?: boolean;
   alert_max_price?: number | null;
+  filters?: SearchFilters;
+  platforms?: string[];
 };
 
 export type MarketplaceListing = {
   id: number;
+  marketplace: string;
   item_id: string;
   title: string;
   url: string;
@@ -592,6 +639,7 @@ export type MarketplaceListing = {
   distance_km: number | null;
   seller_type: SellerType | null;
   attributes: Record<string, string>;
+  unverified_filters: string[];
   is_new: boolean;
   first_seen_at: string;
   last_seen_at: string;
@@ -600,16 +648,32 @@ export type MarketplaceListing = {
   archive_id: number | null;
 };
 
+export async function fetchSearchPlatforms(): Promise<PlatformInfo[]> {
+  const response = await apiFetch(`${API_BASE_URL}/searches/platforms`);
+  const payload = await parseResponse<{ items: PlatformInfo[] }>(response);
+  return payload.items;
+}
+
+export async function fetchSearchMakes(): Promise<TaxonomyOptions> {
+  const response = await apiFetch(`${API_BASE_URL}/searches/makes`);
+  return parseResponse<TaxonomyOptions>(response);
+}
+
+export async function fetchSearchModels(make: string): Promise<TaxonomyOptions> {
+  const query = new URLSearchParams({ make });
+  const response = await apiFetch(`${API_BASE_URL}/searches/models?${query.toString()}`);
+  return parseResponse<TaxonomyOptions>(response);
+}
+
 export async function previewMarketplaceSearch(
-  url: string,
-  sellerType: SellerType,
+  payload: MarketplaceSearchPreviewPayload,
 ): Promise<MarketplaceSearchPreview> {
   const response = await apiFetch(`${API_BASE_URL}/searches/preview`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ url, seller_type: sellerType }),
+    body: JSON.stringify(payload),
   });
   return parseResponse<MarketplaceSearchPreview>(response);
 }

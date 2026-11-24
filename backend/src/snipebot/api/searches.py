@@ -1,17 +1,19 @@
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from snipebot.adapters.marketplaces.marktplaats import (
+from snipebot.adapters.marketplaces.base import (
     Listing,
-    MarktplaatsClient,
-    MarktplaatsError,
+    MarketplaceError,
+    PlatformAdapter,
+    SearchFilters,
 )
+from snipebot.adapters.marketplaces.platforms import get_adapters, platform_label
 from snipebot.api.deps import (
     RequestIdentity,
     enforce_write_rate_limit,
@@ -20,17 +22,23 @@ from snipebot.api.deps import (
 from snipebot.core.metrics import metrics
 from snipebot.domain.marketplace_archive import archive_ids_for
 from snipebot.domain.marketplace_searches import (
+    MergedOption,
     cheapest_listing,
     create_search,
     delete_search,
     get_exclude_keywords,
+    get_post_filters,
     get_search,
     get_search_description,
+    get_search_filters,
     is_listing_new,
+    list_makes,
+    list_models,
     list_search_listings,
     list_searches,
     preview_search,
     search_listing_counts,
+    search_status,
     trigger_search_check_now,
     update_search,
 )
@@ -40,15 +48,54 @@ from snipebot.persistence.models import MarketplaceListing, MarketplaceSearch
 router = APIRouter(prefix="/searches", tags=["searches"])
 
 SellerType = Literal["all", "private", "business"]
+FilterValue = Annotated[int | None, Field(default=None, ge=0, le=100_000_000)]
 
 
-def get_marktplaats_client() -> MarktplaatsClient:
-    return MarktplaatsClient()
+def get_platform_adapters() -> dict[str, PlatformAdapter]:
+    return get_adapters()
+
+
+class FiltersModel(BaseModel):
+    make: str = Field(min_length=1, max_length=100)
+    model: str = Field(min_length=1, max_length=100)
+    year_min: FilterValue = None
+    year_max: FilterValue = None
+    price_min: FilterValue = None
+    price_max: FilterValue = None
+    mileage_min: FilterValue = None
+    mileage_max: FilterValue = None
+    range_min: FilterValue = None
+    battery_min: FilterValue = None
+    battery_max: FilterValue = None
+
+    def to_filters(self) -> SearchFilters:
+        return SearchFilters(**self.model_dump())
+
+
+class PlatformResponse(BaseModel):
+    key: str
+    label: str
+
+
+class PlatformListResponse(BaseModel):
+    items: list[PlatformResponse]
+
+
+class OptionResponse(BaseModel):
+    label: str
+    platforms: list[str]
+
+
+class OptionListResponse(BaseModel):
+    items: list[OptionResponse]
+    warnings: list[str]
 
 
 class SearchPreviewRequest(BaseModel):
-    url: str = Field(min_length=1, max_length=4096)
+    filters: FiltersModel
+    platforms: list[str] = Field(min_length=1, max_length=10)
     seller_type: SellerType = "all"
+    exclude_keywords: list[str] = Field(default_factory=list, max_length=50)
 
 
 class ListingSampleResponse(BaseModel):
@@ -61,16 +108,24 @@ class ListingSampleResponse(BaseModel):
     city: str | None
 
 
+class PlatformPreviewResponse(BaseModel):
+    marketplace: str
+    label: str
+    total_count: int | None
+    post_filters: list[str]
+    sample: list[ListingSampleResponse]
+    error: str | None
+
+
 class SearchPreviewResponse(BaseModel):
     description: list[str]
-    warnings: list[str]
-    total_count: int
-    sample: list[ListingSampleResponse]
+    platforms: list[PlatformPreviewResponse]
 
 
 class SearchCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    url: str = Field(min_length=1, max_length=4096)
+    filters: FiltersModel
+    platforms: list[str] = Field(min_length=1, max_length=10)
     exclude_keywords: list[str] = Field(default_factory=list, max_length=50)
     seller_type: SellerType = "all"
     alert_max_price: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
@@ -83,21 +138,36 @@ class SearchUpdateRequest(BaseModel):
     active: bool | None = None
     # null clears the ceiling (no alerts); omit the field to keep it.
     alert_max_price: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
+    filters: FiltersModel | None = None
+    platforms: list[str] | None = Field(default=None, min_length=1, max_length=10)
 
 
 class CheapestListingResponse(BaseModel):
     item_id: str
+    marketplace: str
     title: str
     url: str
     price: float
     archive_id: int | None
 
 
+class SourceResponse(BaseModel):
+    marketplace: str
+    label: str
+    post_filters: list[str]
+    baseline_done: bool
+    last_checked_at: datetime | None
+    next_check_at: datetime | None
+    last_status: str
+    last_error_message: str | None
+    last_total_count: int | None
+
+
 class SearchResponse(BaseModel):
     id: int
-    marketplace: str
     name: str
-    source_url: str
+    filters: FiltersModel | None
+    platforms: list[SourceResponse]
     description: list[str]
     exclude_keywords: list[str]
     seller_type: str
@@ -126,6 +196,7 @@ class ListingPricePointResponse(BaseModel):
 
 class ListingResponse(BaseModel):
     id: int
+    marketplace: str
     item_id: str
     title: str
     url: str
@@ -137,6 +208,7 @@ class ListingResponse(BaseModel):
     distance_km: int | None
     seller_type: str | None
     attributes: dict[str, str]
+    unverified_filters: list[str]
     is_new: bool
     first_seen_at: datetime
     last_seen_at: datetime
@@ -150,9 +222,17 @@ class ListingListResponse(BaseModel):
     items: list[ListingResponse]
 
 
-def _raise_for_marktplaats(exc: MarktplaatsError) -> None:
-    status = 422 if exc.kind == "invalid_url" else 502
+def _raise_for_marketplace(exc: MarketplaceError) -> None:
+    status = 422 if exc.kind in {"invalid_url", "invalid_filter", "unsupported"} else 502
     raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+def _options_response(result: tuple[list[MergedOption], list[str]]) -> OptionListResponse:
+    options, warnings = result
+    return OptionListResponse(
+        items=[OptionResponse(label=option.label, platforms=option.platforms) for option in options],
+        warnings=warnings,
+    )
 
 
 def _cheapest_response(
@@ -164,6 +244,7 @@ def _cheapest_response(
     archive_ids = archive_ids_for(db_session, owner_id=search.owner_id, item_ids=[row.item_id])
     return CheapestListingResponse(
         item_id=row.item_id,
+        marketplace=row.marketplace,
         title=row.title,
         url=row.url,
         price=float(row.current_price),
@@ -173,11 +254,26 @@ def _cheapest_response(
 
 def _to_response(db_session: Session, search: MarketplaceSearch) -> SearchResponse:
     listing_count, new_count = search_listing_counts(db_session, search)
+    status = search_status(search)
+    filters = get_search_filters(search)
     return SearchResponse(
         id=search.id,
-        marketplace=search.marketplace,
         name=search.name,
-        source_url=search.source_url,
+        filters=FiltersModel(**filters.to_dict()) if filters is not None else None,
+        platforms=[
+            SourceResponse(
+                marketplace=source.marketplace,
+                label=platform_label(source.marketplace),
+                post_filters=get_post_filters(source),
+                baseline_done=source.baseline_done,
+                last_checked_at=source.last_checked_at,
+                next_check_at=source.next_check_at,
+                last_status=source.last_status,
+                last_error_message=source.last_error_message,
+                last_total_count=source.last_total_count,
+            )
+            for source in search.sources
+        ],
         description=get_search_description(search),
         exclude_keywords=get_exclude_keywords(search),
         seller_type=search.seller_type,
@@ -185,12 +281,12 @@ def _to_response(db_session: Session, search: MarketplaceSearch) -> SearchRespon
         if search.alert_max_price is not None
         else None,
         active=search.active,
-        baseline_done=search.baseline_done,
-        last_checked_at=search.last_checked_at,
-        next_check_at=search.next_check_at,
-        last_status=search.last_status,
-        last_error_message=search.last_error_message,
-        last_total_count=search.last_total_count,
+        baseline_done=status.baseline_done,
+        last_checked_at=status.last_checked_at,
+        next_check_at=status.next_check_at,
+        last_status=status.last_status,
+        last_error_message=status.last_error_message,
+        last_total_count=status.last_total_count,
         listing_count=listing_count,
         new_listing_count=new_count,
         cheapest=_cheapest_response(db_session, search),
@@ -215,6 +311,7 @@ def _listing_response(
 ) -> ListingResponse:
     return ListingResponse(
         id=row.id,
+        marketplace=row.marketplace,
         item_id=row.item_id,
         title=row.title,
         url=row.url,
@@ -228,6 +325,7 @@ def _listing_response(
         else None,
         seller_type=row.seller_type,
         attributes=json.loads(row.attributes_json or "{}"),
+        unverified_filters=json.loads(row.unverified_filters_json or "[]"),
         is_new=is_listing_new(row, now),
         first_seen_at=row.first_seen_at,
         last_seen_at=row.last_seen_at,
@@ -249,24 +347,62 @@ def _get_owned_search(
     return search
 
 
+@router.get("/platforms", response_model=PlatformListResponse)
+def get_platforms(
+    adapters: dict[str, PlatformAdapter] = Depends(get_platform_adapters),
+) -> PlatformListResponse:
+    return PlatformListResponse(
+        items=[PlatformResponse(key=key, label=adapter.label) for key, adapter in adapters.items()]
+    )
+
+
+@router.get("/makes", response_model=OptionListResponse)
+def get_makes(
+    adapters: dict[str, PlatformAdapter] = Depends(get_platform_adapters),
+) -> OptionListResponse:
+    return _options_response(list_makes(adapters))
+
+
+@router.get("/models", response_model=OptionListResponse)
+def get_models(
+    make: str = Query(min_length=1, max_length=100),
+    adapters: dict[str, PlatformAdapter] = Depends(get_platform_adapters),
+) -> OptionListResponse:
+    return _options_response(list_models(adapters, make))
+
+
 @router.post("/preview", response_model=SearchPreviewResponse)
 def preview(
     payload: SearchPreviewRequest,
     request: Request,
     identity: RequestIdentity = Depends(get_request_identity),
-    client: MarktplaatsClient = Depends(get_marktplaats_client),
+    adapters: dict[str, PlatformAdapter] = Depends(get_platform_adapters),
 ) -> SearchPreviewResponse:
     enforce_write_rate_limit(request, identity)
     metrics.inc("api.searches.preview")
     try:
-        result = preview_search(client, url=payload.url, seller_type=payload.seller_type)
-    except MarktplaatsError as exc:
-        _raise_for_marktplaats(exc)
+        result = preview_search(
+            adapters,
+            filters=payload.filters.to_filters(),
+            platforms=payload.platforms,
+            seller_type=payload.seller_type,
+            exclude_keywords=payload.exclude_keywords,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return SearchPreviewResponse(
         description=result.description,
-        warnings=result.warnings,
-        total_count=result.total_count,
-        sample=[_sample_response(listing) for listing in result.sample],
+        platforms=[
+            PlatformPreviewResponse(
+                marketplace=item.marketplace,
+                label=platform_label(item.marketplace),
+                total_count=item.total_count,
+                post_filters=item.post_filters,
+                sample=[_sample_response(listing) for listing in item.sample],
+                error=item.error,
+            )
+            for item in result.platforms
+        ],
     )
 
 
@@ -285,23 +421,24 @@ def post_search(
     request: Request,
     identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
-    client: MarktplaatsClient = Depends(get_marktplaats_client),
+    adapters: dict[str, PlatformAdapter] = Depends(get_platform_adapters),
 ) -> SearchResponse:
     enforce_write_rate_limit(request, identity)
     metrics.inc("api.searches.create")
     try:
         search = create_search(
             db_session,
-            client,
+            adapters,
             owner_id=identity.owner_id,
             name=payload.name,
-            url=payload.url,
+            filters=payload.filters.to_filters(),
+            platforms=payload.platforms,
             exclude_keywords=payload.exclude_keywords,
             seller_type=payload.seller_type,
             alert_max_price=payload.alert_max_price,
         )
-    except MarktplaatsError as exc:
-        _raise_for_marktplaats(exc)
+    except MarketplaceError as exc:
+        _raise_for_marketplace(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _to_response(db_session, search)
@@ -323,28 +460,32 @@ def patch_search(
     request: Request,
     identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
-    client: MarktplaatsClient = Depends(get_marktplaats_client),
+    adapters: dict[str, PlatformAdapter] = Depends(get_platform_adapters),
 ) -> SearchResponse:
     enforce_write_rate_limit(request, identity)
     search = _get_owned_search(db_session, identity, search_id)
     try:
         search = update_search(
             db_session,
-            client,
+            adapters,
             search,
             name=payload.name,
             exclude_keywords=payload.exclude_keywords,
             seller_type=payload.seller_type,
             active=payload.active,
+            filters=payload.filters.to_filters() if payload.filters is not None else None,
+            platforms=payload.platforms,
             **(
                 {"alert_max_price": payload.alert_max_price}
                 if "alert_max_price" in payload.model_fields_set
                 else {}
             ),
         )
-    except MarktplaatsError as exc:
-        _raise_for_marktplaats(exc)
+    except MarketplaceError as exc:
+        db_session.rollback()
+        _raise_for_marketplace(exc)
     except ValueError as exc:
+        db_session.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _to_response(db_session, search)
 

@@ -36,6 +36,31 @@ PRICE_TYPE_FACET = {
 YEAR_FACET = {"id": 1597, "key": "constructionYear", "type": "AttributeRangeFacet", "label": "Bouwjaar"}
 MILEAGE_FACET = {"id": 1598, "key": "mileage", "type": "AttributeRangeFacet", "label": "Kilometerstand"}
 CAR_FACETS = [ADVERTISER_FACET, PRICE_TYPE_FACET, YEAR_FACET, MILEAGE_FACET, MODEL_FACET]
+CATEGORY_FACET = {
+    "id": 0,
+    "key": "RelevantCategories",
+    "type": "CategoryTreeFacet",
+    "categories": [
+        {"id": 91, "label": "Auto's", "key": "auto-s", "parentId": None},
+        {"id": 157, "label": "Volkswagen", "key": "volkswagen", "parentId": 91},
+        {"id": 2830, "label": "Tesla", "key": "tesla", "parentId": 91},
+    ],
+}
+# Query of the Golf search built from GOLF_FILTERS (and of the legacy SEARCH_URL).
+GOLF_QUERY = {
+    "query": None,
+    "l1_category_id": 91,
+    "l2_category_ids": [157],
+    "attribute_ids": [1260, 10882],
+    "attributes_by_key": [],
+    "ranges": [
+        {"key": "constructionYear", "low": 2018, "high": None},
+        {"key": "PriceCents", "low": None, "high": 2500000},
+        {"key": "mileage", "low": None, "high": 100000},
+    ],
+    "postcode": None,
+    "distance_meters": None,
+}
 
 SEARCH_URL = (
     "https://www.marktplaats.nl/l/auto-s/volkswagen/f/golf/1260/"
@@ -214,6 +239,9 @@ class FakeFetcher:
         self.requests.append(url)
         if self.error is not None:
             raise self.error
+        if "/lrp/api/search" in url and "limit=1&" in url:
+            # Taxonomy lookups (makes of "Auto's", facets of a make).
+            return json.dumps(search_payload([], facets=[*CAR_FACETS, CATEGORY_FACET]))
         if "/lrp/api/search" in url:
             payload = self.payloads.pop(0) if self.payloads else self.default_payload
             return json.dumps(payload)
@@ -240,6 +268,86 @@ class FakeImages:
         if self.error is not None:
             raise self.error
         return f"jpeg:{url}".encode()
+
+
+class FakeAdapter:
+    """In-memory platform: fixed makes/models, queued pages, chosen post-filters."""
+
+    def __init__(
+        self,
+        key: str,
+        label: str,
+        *,
+        models: dict[str, list[str]] | None = None,
+        post_filters: list[str] | None = None,
+    ) -> None:
+        self.key = key
+        self.label = label
+        self._models = models or {"Tesla": ["Model 3"]}
+        self._post_filters = post_filters or []
+        self.pages: list[Any] = []
+        self.queries: list[dict[str, Any]] = []
+
+    def makes(self):
+        from snipebot.adapters.marketplaces.base import TaxonomyOption
+
+        return [TaxonomyOption(id=name, label=name) for name in self._models]
+
+    def models(self, make):
+        from snipebot.adapters.marketplaces.base import TaxonomyOption
+
+        return [TaxonomyOption(id=name, label=name) for name in self._models.get(make.label, [])]
+
+    def build_query(self, filters, seller_type):
+        from snipebot.adapters.marketplaces.base import MarketplaceError, PlatformQuery
+
+        if filters.model not in self._models.get(filters.make, []):
+            raise MarketplaceError("unsupported", f"{filters.model} is not on {self.label}")
+        query = {"make": filters.make, "model": filters.model, "seller": seller_type}
+        for key in filters.active_keys():
+            if key not in self._post_filters:
+                query[key] = list(filters.bounds(key))
+        return PlatformQuery(query=query, post_filters=[
+            key for key in self._post_filters if key in filters.active_keys()
+        ])
+
+    def search(self, query, *, limit=None):
+        from snipebot.adapters.marketplaces.base import SearchPage
+
+        self.queries.append(query)
+        page = self.pages.pop(0) if self.pages else SearchPage(0, [], complete=True)
+        if isinstance(page, Exception):
+            raise page
+        return page
+
+
+def car(
+    marketplace: str,
+    item_id: str,
+    *,
+    price: int = 30000,
+    specs: dict[str, int] | None = None,
+    title: str | None = None,
+):
+    from decimal import Decimal
+
+    from snipebot.adapters.marketplaces.base import Listing
+
+    return Listing(
+        item_id=item_id,
+        title=title or f"Tesla Model 3 {item_id}",
+        description="",
+        url=f"https://{marketplace}.example.test/{item_id}",
+        image_url=None,
+        price=Decimal(price),
+        price_type=None,
+        city="Lelystad",
+        distance_meters=None,
+        attributes={},
+        seller_type=None,
+        marketplace=marketplace,
+        specs=specs or {},
+    )
 
 
 class CollectingNotifier:
