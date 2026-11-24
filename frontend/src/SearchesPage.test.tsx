@@ -41,6 +41,7 @@ const savedSearch = {
   exclude_keywords: ["schade"],
   seller_type: "private",
   alert_max_price: 45000,
+  unknown_policy: "quiet",
   active: true,
   baseline_done: true,
   last_checked_at: "2026-11-23T10:00:00Z",
@@ -178,6 +179,7 @@ describe("Marktplaats searches", () => {
           ...expectedPayload,
           name: "Golf GTI",
           alert_max_price: 45000,
+          unknown_policy: "exclude",
         });
         searches.push(savedSearch);
         return jsonResponse(savedSearch, 201);
@@ -216,6 +218,7 @@ describe("Marktplaats searches", () => {
     fireEvent.change(screen.getByLabelText("Alert price ceiling (€)"), {
       target: { value: "€ 45.000" },
     });
+    fireEvent.change(screen.getByLabelText("Value not stated"), { target: { value: "exclude" } });
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
 
     expect(await screen.findByText("Marktplaats: 86 listings match")).toBeTruthy();
@@ -229,6 +232,7 @@ describe("Marktplaats searches", () => {
     const row = (await screen.findByTestId("search-row-7")).textContent ?? "";
     expect(row).toContain("1 new");
     expect(row).toContain("Marktplaats + AutoTrack");
+    expect(row).toContain("Not stated: keep, no alerts");
     expect(row.replace(/\s/g, " ")).toContain("Alerts ≤ € 45.000");
     const cheapest = screen.getByTestId("search-cheapest-7");
     expect(cheapest.textContent?.replace(/\s/g, " ")).toContain("€ 21.000 · Marktplaats");
@@ -291,6 +295,7 @@ describe("Marktplaats searches", () => {
     expect(screen.getByTestId("source-autotrack").textContent).toContain("SnipeBot checks battery capacity itself");
     await waitFor(() => expect((screen.getByLabelText("Model") as HTMLSelectElement).value).toBe("Golf"));
     expect((screen.getByLabelText("Year from") as HTMLInputElement).value).toBe("2018");
+    expect((screen.getByLabelText("Value not stated") as HTMLSelectElement).value).toBe("quiet");
     await waitFor(() =>
       expect(
         (screen.getByLabelText("Exclude words (comma separated)") as HTMLInputElement).value,

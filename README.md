@@ -18,7 +18,7 @@ Besides product pages, SnipeBot can watch car searches on several platforms at o
 3. The first check of each platform records the current listings silently. Afterwards the worker checks every ~10 minutes per platform and sends a Telegram message (with photo) for each new matching listing and for price drops. When a search covers several platforms, the message names the platform.
 4. Set an **alert price ceiling** per search: Telegram only alerts for new listings and price drops at or below it (listings without a price never alert). Without a ceiling the search records and archives listings but sends no alerts.
 
-A filter a platform cannot apply itself is checked by SnipeBot against the listing data. Listings that do not state the value (e.g. no battery capacity) are kept and marked "unknown" in the list and in the Telegram message.
+A filter a platform cannot apply itself is checked by SnipeBot against the listing data. What happens to listings that do not state the value (e.g. no battery capacity) is set per search under **Value not stated**: *Keep and alert* (default; marked "unknown" in the list and the Telegram message), *Keep, no alerts* or *Leave out*. Switching away from *Leave out* records the listings that were left out silently, so they do not alert as new.
 
 Each platform is an adapter (`backend/src/snipebot/adapters/marketplaces/`) implementing `PlatformAdapter`: it lists makes and models, turns the filters into a platform query (reporting the filters it cannot apply) and runs that query.
 

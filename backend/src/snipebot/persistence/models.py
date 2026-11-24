@@ -218,6 +218,11 @@ class MarketplaceSearch(Base):
     seller_type: Mapped[str] = mapped_column(String(16), nullable=False, default="all")
     # Telegram alerts only for listings at or below this price; NULL = no alerts.
     alert_max_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    # Listings that do not state a value SnipeBot filters on itself:
+    # "include" (keep and alert), "quiet" (keep, no alerts) or "exclude".
+    unknown_policy: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="include", server_default="include"
+    )
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     baseline_done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Highest numeric listing id known for this search. Unseen listings below

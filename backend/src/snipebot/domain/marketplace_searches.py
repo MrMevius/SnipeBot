@@ -9,6 +9,11 @@ Each check fetches the newest listings of one source. The first successful
 check records the current listings silently (baseline). Later checks notify
 for listings that are genuinely new and for price drops on known listings.
 
+Filters a platform cannot apply are checked against the listing data. A listing
+that does not state the value is handled by the search's ``unknown_policy``:
+kept and alerted ("include"), kept without alerts ("quiet") or left out
+("exclude").
+
 Telegram alerts are limited by the search's price ceiling (``alert_max_price``):
 new listings and price drops alert only when the price is at or below it, and a
 search without a ceiling sends no alerts. All listings are still recorded.
@@ -82,6 +87,7 @@ _UNSET = object()
 MAX_ALERTS_PER_CHECK = 10
 NEW_LISTING_WINDOW = timedelta(hours=48)
 DUE_BATCH_SIZE = 10
+UNKNOWN_POLICIES = ("include", "quiet", "exclude")
 PREVIEW_SAMPLE_SIZE = 5
 
 _SELLER_LABELS = {"private": "Particulier", "business": "Bedrijf"}
@@ -241,6 +247,7 @@ def create_search(
     exclude_keywords: list[str] | None,
     seller_type: str,
     alert_max_price: Decimal | None = None,
+    unknown_policy: str = "include",
 ) -> MarketplaceSearch:
     clean_name = name.strip()
     if not clean_name:
@@ -248,6 +255,7 @@ def create_search(
     filters = validate_filters(filters)
     platforms = _validate_platforms(adapters, platforms)
     _validate_seller_type(seller_type)
+    _validate_unknown_policy(unknown_policy)
     keywords = normalize_keywords(exclude_keywords)
     queries = _build_queries(adapters, filters, platforms, seller_type)
 
@@ -263,6 +271,7 @@ def create_search(
         exclude_keywords_json=json.dumps(keywords),
         seller_type=seller_type,
         alert_max_price=_validate_ceiling(alert_max_price),
+        unknown_policy=unknown_policy,
         active=True,
         baseline_done=False,
         last_status="pending",
@@ -293,8 +302,18 @@ def update_search(
     alert_max_price: Decimal | None | object = _UNSET,
     filters: SearchFilters | None = None,
     platforms: list[str] | None = None,
+    unknown_policy: str | None = None,
 ) -> MarketplaceSearch:
     now = datetime.now(UTC)
+
+    if unknown_policy is not None and unknown_policy != search.unknown_policy:
+        _validate_unknown_policy(unknown_policy)
+        previous, search.unknown_policy = search.unknown_policy, unknown_policy
+        if previous == "exclude":
+            # Listings left out so far would otherwise show up as new.
+            for source in search.sources:
+                if get_post_filters(source):
+                    _restart_baseline(source, now)
 
     if alert_max_price is not _UNSET:
         # Only affects which future events alert; no new baseline needed.
@@ -612,10 +631,21 @@ def check_source(
         ).all()
     }
 
+    policy = search.unknown_policy
     intents: list[_AlertIntent] = []
     for listing in matching:
         unknown = unknown_by_id.get(listing.item_id, [])
         row = known.get(listing.item_id)
+        if unknown and policy == "exclude":
+            if row is not None:
+                _delete_listing_rows(db_session, [row])
+            continue
+        if unknown and policy == "quiet":
+            if row is None:
+                _create_listing_row(db_session, search, listing, now, baseline, unknown)
+            else:
+                _update_listing_row(row, listing, now, unknown)
+            continue
         if row is None:
             row = _create_listing_row(db_session, search, listing, now, baseline, unknown)
             if baseline:
@@ -653,6 +683,8 @@ def check_source(
             )
 
     archive = settings.marketplace_archive_enabled and source.marketplace in ARCHIVE_MARKETPLACES
+    if policy == "exclude":
+        matching = [listing for listing in matching if not unknown_by_id.get(listing.item_id)]
     if archive:
         observe_listings(db_session, search, matching, now)
 
@@ -733,6 +765,11 @@ def _validate_platforms(adapters: Adapters, platforms: list[str]) -> list[str]:
     return sorted(result, key=order.index)
 
 
+def _validate_unknown_policy(policy: str) -> None:
+    if policy not in UNKNOWN_POLICIES:
+        raise ValueError(f"Unknown policy for missing values: {policy}")
+
+
 def _validate_seller_type(seller_type: str | None) -> None:
     if seller_type not in SELLER_TYPES:
         raise ValueError(f"Unknown seller type: {seller_type}")
@@ -796,11 +833,17 @@ def _restart_baseline(source: MarketplaceSearchSource, now: datetime) -> None:
 
 
 def _delete_platform_listings(db_session: Session, search: MarketplaceSearch, key: str) -> None:
-    rows = db_session.scalars(
-        select(MarketplaceListing).where(
-            MarketplaceListing.search_id == search.id, MarketplaceListing.marketplace == key
-        )
-    ).all()
+    _delete_listing_rows(
+        db_session,
+        db_session.scalars(
+            select(MarketplaceListing).where(
+                MarketplaceListing.search_id == search.id, MarketplaceListing.marketplace == key
+            )
+        ).all(),
+    )
+
+
+def _delete_listing_rows(db_session: Session, rows: list[MarketplaceListing]) -> None:
     ids = [row.id for row in rows]
     if ids:
         db_session.execute(

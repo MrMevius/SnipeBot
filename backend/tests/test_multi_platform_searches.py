@@ -236,3 +236,65 @@ def test_adding_and_removing_platforms() -> None:
         update_search(session, adapters, search, platforms=["autotrack"])
         assert [source.marketplace for source in search.sources] == ["autotrack"]
     assert _rows() == {}
+
+
+def _alerts_for_unknown_battery(policy: str):
+    _reset()
+    adapters = _adapters()
+    search_id = _create(adapters, platforms=["autotrack"])
+    with get_session_factory()() as session:
+        update_search(session, adapters, session.get(MarketplaceSearch, search_id), unknown_policy=policy)
+    notifier = CollectingNotifier()
+    adapters["autotrack"].pages.append(
+        SearchPage(1, [car("autotrack", "at-1", specs={"battery": 57})], complete=True)
+    )
+    _run(adapters, notifier)
+    adapters["autotrack"].pages.append(
+        SearchPage(
+            3,
+            [
+                car("autotrack", "at-2", price=31000),
+                car("autotrack", "at-3", price=32000, specs={"battery": 58}),
+                car("autotrack", "at-1", specs={"battery": 57}),
+            ],
+            complete=True,
+        )
+    )
+    _run(adapters, notifier)
+    return adapters, notifier, search_id
+
+
+def test_unknown_values_can_be_kept_quietly() -> None:
+    _, notifier, _ = _alerts_for_unknown_battery("quiet")
+    assert ["Tesla Model 3 at-3" in message.body for message in notifier.messages] == [True]
+    assert sorted(_rows()) == ["at-1", "at-2", "at-3"]
+
+
+def test_unknown_values_can_be_left_out_and_back_in_silently() -> None:
+    adapters, notifier, search_id = _alerts_for_unknown_battery("exclude")
+    assert len(notifier.messages) == 1
+    assert sorted(_rows()) == ["at-1", "at-3"]
+
+    # Switching back records the left-out listings silently instead of alerting.
+    with get_session_factory()() as session:
+        search = session.get(MarketplaceSearch, search_id)
+        update_search(session, adapters, search, unknown_policy="include")
+        assert search.sources[0].baseline_done is False
+    adapters["autotrack"].pages.append(
+        SearchPage(2, [car("autotrack", "at-2", price=31000), car("autotrack", "at-1", specs={"battery": 57})], complete=True)
+    )
+    _run(adapters, notifier)
+    assert len(notifier.messages) == 1
+    assert _rows()["at-2"].from_baseline is True
+
+
+def test_switching_to_exclude_removes_recorded_unknown_listings() -> None:
+    adapters, _, search_id = _alerts_for_unknown_battery("include")
+    assert "at-2" in _rows()
+    with get_session_factory()() as session:
+        update_search(session, adapters, session.get(MarketplaceSearch, search_id), unknown_policy="exclude")
+    adapters["autotrack"].pages.append(
+        SearchPage(1, [car("autotrack", "at-2", price=31000)], complete=True)
+    )
+    _run(adapters, CollectingNotifier())
+    assert "at-2" not in _rows()

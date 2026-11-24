@@ -18,4 +18,6 @@
 
 - [x] 3.1 Shared adapter for the AutoScout24 group sites (`Scout24Site`): AutoTrack and AutoScout24.nl (NL, BE, DE; private sellers; country shown with the city).
 - [x] 3.2 Same listing ids: switching AutoTrack → AutoScout24 moves search listings and archive items instead of recording them again.
-- [ ] 3.3 Production: replace AutoTrack by AutoScout24 in both searches.
+- [x] 3.3 Production: replace AutoTrack by AutoScout24 in both searches.
+- [x] 3.4 Per-search policy for listings without a post-filtered value: keep and alert, keep quietly, leave out (+ Alembic `20261125_0010`).
+- [ ] 3.5 Production: SR keeps unknown battery quietly, LR leaves out unknown range.

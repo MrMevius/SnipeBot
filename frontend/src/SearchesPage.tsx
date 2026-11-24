@@ -8,6 +8,7 @@ import {
   SearchFilters,
   SellerType,
   TaxonomyOption,
+  UnknownPolicy,
   createMarketplaceSearch,
   deleteMarketplaceSearch,
   fetchMarketplaceListings,
@@ -62,6 +63,34 @@ export function parseEuroAmount(value: string): number | null {
 
 function ceilingLabel(value: number | null): string {
   return value === null ? "Alerts off (no price ceiling)" : `Alerts ≤ ${formatEuro(value)}`;
+}
+
+const UNKNOWN_POLICY_LABELS: Record<UnknownPolicy, string> = {
+  include: "Keep and alert",
+  quiet: "Keep, no alerts",
+  exclude: "Leave out",
+};
+
+// Applies to filters a platform cannot apply itself (e.g. battery capacity on AutoScout24).
+function UnknownPolicySelect({
+  value,
+  onChange,
+}: {
+  value: UnknownPolicy;
+  onChange: (value: UnknownPolicy) => void;
+}) {
+  return (
+    <label title="For filters SnipeBot checks itself, e.g. battery capacity or range on AutoScout24">
+      Value not stated
+      <select value={value} onChange={(event) => onChange(event.target.value as UnknownPolicy)}>
+        {(Object.keys(UNKNOWN_POLICY_LABELS) as UnknownPolicy[]).map((key) => (
+          <option key={key} value={key}>
+            {UNKNOWN_POLICY_LABELS[key]}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 function CeilingInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
@@ -453,6 +482,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
   const [keywords, setKeywords] = useState("");
   const [sellerType, setSellerType] = useState<SellerType>("all");
   const [ceiling, setCeiling] = useState("");
+  const [unknownPolicy, setUnknownPolicy] = useState<UnknownPolicy>("include");
   const [preview, setPreview] = useState<MarketplaceSearchPreview | null>(null);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -524,6 +554,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
         exclude_keywords: parseKeywords(keywords),
         seller_type: sellerType,
         alert_max_price: alertMaxPrice,
+        unknown_policy: unknownPolicy,
       });
       setFeedback(`Saved search “${created.name}”.`);
       setName("");
@@ -531,6 +562,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
       setKeywords("");
       setSellerType("all");
       setCeiling("");
+      setUnknownPolicy("include");
       setPreview(null);
       setPreviewKey(null);
       await load();
@@ -586,6 +618,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
             </label>
             <SellerSelect value={sellerType} onChange={setSellerType} />
             <CeilingInput value={ceiling} onChange={setCeiling} />
+            <UnknownPolicySelect value={unknownPolicy} onChange={setUnknownPolicy} />
             <div className="actions-row">
               <button
                 type="button"
@@ -647,6 +680,11 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
                       </a>
                       <div className="compact-cell-sub muted">{platformNames(search)}</div>
                       <div className="compact-cell-sub muted">{ceilingLabel(search.alert_max_price)}</div>
+                      {search.unknown_policy !== "include" && (
+                        <div className="compact-cell-sub muted">
+                          Not stated: {UNKNOWN_POLICY_LABELS[search.unknown_policy].toLowerCase()}
+                        </div>
+                      )}
                     </td>
                     <td className="muted">{search.description.join(" · ")}</td>
                     <td>
@@ -798,6 +836,7 @@ function SearchDetail({
   const [keywords, setKeywords] = useState("");
   const [sellerType, setSellerType] = useState<SellerType>("all");
   const [ceiling, setCeiling] = useState("");
+  const [unknownPolicy, setUnknownPolicy] = useState<UnknownPolicy>("include");
   const [showGone, setShowGone] = useState(false);
   const [listingSort, setListingSort] = useState<ListingSort>({ column: "first_seen", direction: "desc" });
   const [busy, setBusy] = useState(false);
@@ -814,6 +853,7 @@ function SearchDetail({
       setFilterForm(filterFormFrom(searchPayload));
       setKeywords(searchPayload.exclude_keywords.join(", "));
       setSellerType(searchPayload.seller_type);
+      setUnknownPolicy(searchPayload.unknown_policy);
       setCeiling(
         searchPayload.alert_max_price === null
           ? ""
@@ -855,6 +895,7 @@ function SearchDetail({
         exclude_keywords: parseKeywords(keywords),
         seller_type: sellerType,
         alert_max_price: alertMaxPrice,
+        unknown_policy: unknownPolicy,
         ...(filters ? { filters, platforms: filterForm.platforms } : {}),
       });
       setFeedback("Saved.");
@@ -959,6 +1000,7 @@ function SearchDetail({
                 </label>
                 <SellerSelect value={sellerType} onChange={setSellerType} />
                 <CeilingInput value={ceiling} onChange={setCeiling} />
+                <UnknownPolicySelect value={unknownPolicy} onChange={setUnknownPolicy} />
                 <button type="submit" disabled={busy}>
                   Save changes
                 </button>
