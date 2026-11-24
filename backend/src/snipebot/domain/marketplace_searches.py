@@ -95,6 +95,7 @@ _SELLER_LABELS = {"private": "Particulier", "business": "Bedrijf"}
 _PRICE_TYPE_LABELS = {
     "MIN_BID": "bieden vanaf",
     "FAST_BID": "bieden",
+    "NEGOTIABLE": "onderhandelbaar",
     "BID": "bieden",
     "SEE_DESCRIPTION": "zie omschrijving",
     "NOTK": "n.o.t.k.",

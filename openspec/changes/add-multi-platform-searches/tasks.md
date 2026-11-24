@@ -31,4 +31,9 @@
 
 - [x] 5.1 ViaBOVAG adapter: React Server Components flight payload, make/model facets, all result pages, all other filters as post-filters.
 - [x] 5.2 Archive ViaBOVAG listings (specification groups, dealer comments, BOVAG certainties, photos, license plate).
-- Kleinanzeigen.de was examined and dropped: it answers SnipeBot's HTTP client with 403 (automated clients are refused); SnipeBot does not work around that.
+
+## 6. Kleinanzeigen (PR G)
+
+- [x] 6.1 Kleinanzeigen adapter: Astro island props (result ads, make/model menus), year/price/mileage/seller in the URL, all result pages newest first, top ads skipped, range and battery as post-filters.
+- [x] 6.2 Archive Kleinanzeigen listings (details, equipment, description, gallery photos, seller).
+- Earlier finding revisited: the 403 was Python's HTTP client; curl with SnipeBot's own user agent gets the regular pages, and robots.txt allows `/s-autos/` and `/s-anzeige/`.

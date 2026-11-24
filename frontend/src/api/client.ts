@@ -757,6 +757,7 @@ export const PLATFORM_LABELS: Record<string, string> = {
   "2dehands": "2dehands",
   autoscout24: "AutoScout24",
   viabovag: "ViaBOVAG",
+  kleinanzeigen: "Kleinanzeigen",
   autotrack: "AutoTrack",
 };
 

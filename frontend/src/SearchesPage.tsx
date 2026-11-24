@@ -113,6 +113,7 @@ const PLATFORM_COUNTRY: Record<string, string> = {
   marktplaats: "NL",
   "2dehands": "BE",
   viabovag: "NL",
+  kleinanzeigen: "DE",
   autotrack: "NL",
 };
 

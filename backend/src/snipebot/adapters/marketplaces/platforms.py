@@ -5,6 +5,7 @@ from __future__ import annotations
 from snipebot.core.config import get_settings
 
 from snipebot.adapters.marketplaces.base import HomeLocation, PlatformAdapter
+from snipebot.adapters.marketplaces.kleinanzeigen import KleinanzeigenAdapter
 from snipebot.adapters.marketplaces.marktplaats import TWEEDEHANDS, MarktplaatsAdapter
 from snipebot.adapters.marketplaces.scout24 import AUTOSCOUT24, AUTOTRACK, Scout24Adapter
 from snipebot.adapters.marketplaces.viabovag import ViaBovagAdapter
@@ -15,6 +16,7 @@ PLATFORM_LABELS = {
     "2dehands": "2dehands",
     "autoscout24": "AutoScout24",
     "viabovag": "ViaBOVAG",
+    "kleinanzeigen": "Kleinanzeigen",
     "autotrack": "AutoTrack",
 }
 
@@ -36,6 +38,7 @@ def get_adapters() -> dict[str, PlatformAdapter]:
             "2dehands": MarktplaatsAdapter(site=TWEEDEHANDS, home=home),
             "autoscout24": Scout24Adapter(AUTOSCOUT24, home=home),
             "viabovag": ViaBovagAdapter(home=home),
+            "kleinanzeigen": KleinanzeigenAdapter(),
             "autotrack": Scout24Adapter(AUTOTRACK, home=home),
         }
     return _adapters

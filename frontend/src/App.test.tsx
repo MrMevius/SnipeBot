@@ -131,6 +131,7 @@ describe("App", () => {
     expect(screen.getByTestId("car-site-card-leboncoin").textContent).toContain("Gepland");
     expect(screen.getByTestId("car-site-card-2dehands").textContent).toContain("Live");
     expect(screen.getByTestId("car-site-card-viabovag").textContent).toContain("Live");
+    expect(screen.getByTestId("car-site-card-kleinanzeigen").textContent).toContain("Live");
     expect(screen.getByTestId("car-site-card-marktplaats")).toBeTruthy();
     expect(screen.getByTestId("car-site-card-autotrack")).toBeTruthy();
     expect(screen.getByText("Volledige product-URL; target optioneel.")).toBeTruthy();

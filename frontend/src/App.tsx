@@ -804,6 +804,16 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     note: "Met kenteken, BOVAG-garantie en actieradius/accu volgens opgave. Veel auto's staan ook op AutoScout24/Marktplaats.",
   },
   {
+    siteKey: "kleinanzeigen",
+    label: "Kleinanzeigen",
+    domain: "kleinanzeigen.de",
+    status: "live",
+    countries: "DE",
+    sellers: "Particulier + dealer",
+    filters: "Actieradius en accucapaciteit door SnipeBot",
+    note: "Prijs zonder BPM/import. Accu alleen uit titel/omschrijving; actieradius staat er nooit bij. Opgehaald met curl.",
+  },
+  {
     siteKey: "autotrack",
     label: "AutoTrack",
     domain: "autotrack.nl",
@@ -862,16 +872,6 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     sellers: "Particulier + dealer",
     filters: "Nog te onderzoeken",
     note: "Blokkeert SnipeBot (HTTP 403) en verbiedt zoekpagina's in robots.txt; niet te koppelen.",
-  },
-  {
-    siteKey: "kleinanzeigen",
-    label: "Kleinanzeigen",
-    domain: "kleinanzeigen.de",
-    status: "blocked",
-    countries: "DE",
-    sellers: "Vooral particulier",
-    filters: "Nog te onderzoeken",
-    note: "Weigert geautomatiseerde clients (HTTP 403); niet te koppelen.",
   },
   {
     siteKey: "leboncoin",
