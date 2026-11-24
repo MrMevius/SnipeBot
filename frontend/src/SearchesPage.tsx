@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useState } from "react";
+import { FormEvent, MouseEvent, ReactNode, useCallback, useEffect, useState } from "react";
 
 import {
   MarketplaceListing,
@@ -510,10 +510,13 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
   const [preview, setPreview] = useState<MarketplaceSearchPreview | null>(null);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      setSearches(await fetchMarketplaceSearches());
+      const items = await fetchMarketplaceSearches();
+      setSearches(items);
+      if (items.length === 0) setNewOpen(true);
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -581,6 +584,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
         unknown_policy: unknownPolicy,
       });
       setFeedback(`Saved search “${created.name}”.`);
+      setNewOpen(false);
       setName("");
       setFilterForm(emptyFilterForm());
       setKeywords("");
@@ -608,210 +612,235 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
     }
   }
 
+  const newCount = searches.reduce((total, search) => total + search.new_listing_count, 0);
+
   return (
     <>
-      <section className="panel compact-form">
-        <h1>Searches</h1>
-        <p className="muted">
-          Choose a car and filters once; SnipeBot searches every selected platform and alerts on new
-          listings and price drops.
-        </p>
-        <form onSubmit={handleSave}>
-          <div className="compact-grid search-form-grid">
-            <label>
-              Name
-              <input
-                type="text"
-                placeholder="Model 3 SR"
-                value={name}
-                required
-                onChange={(event) => setName(event.target.value)}
-              />
-            </label>
-          </div>
-          <SearchFilterFields value={filterForm} onChange={setFilterForm} />
-          <div className="compact-grid search-form-grid">
-            <label>
-              Exclude words (comma separated)
-              <input
-                type="text"
-                placeholder="schade, export, opkoper"
-                value={keywords}
-                onChange={(event) => setKeywords(event.target.value)}
-              />
-            </label>
-            <SellerSelect value={sellerType} onChange={setSellerType} />
-            <CeilingInput value={ceiling} onChange={setCeiling} />
-            <UnknownPolicySelect value={unknownPolicy} onChange={setUnknownPolicy} />
-            <div className="actions-row">
-              <button
-                type="button"
-                className="secondary"
-                disabled={busy || !canPreview}
-                onClick={() => void handlePreview()}
-              >
-                Preview
-              </button>
-              <button type="submit" disabled={busy || !previewIsCurrent || !name.trim()}>
-                Save search
-              </button>
-            </div>
-          </div>
-        </form>
-        <p className="muted">
-          Telegram only alerts for new listings and price drops at or below the price ceiling;
-          without a ceiling the search records listings but sends no alerts.
-        </p>
-        {busy && <p className="muted">Asking the platforms…</p>}
-        {preview && previewIsCurrent && <SearchPreviewCard preview={preview} />}
-        {error && <p className="error">{error}</p>}
-        {feedback && <p className="success">{feedback}</p>}
-      </section>
-
       <section className="panel">
-        <h2>Saved searches</h2>
+        <div className="searches-head">
+          <div>
+            <h1>Searches</h1>
+            <p className="muted">
+              Choose a car and filters once; SnipeBot searches every selected platform and alerts on new
+              listings and price drops.
+            </p>
+          </div>
+          {searches.length > 0 && (
+            <div className="searches-summary">
+              <span className="chip">{searches.length} searches</span>
+              {newCount > 0 && <span className="chip chip-new">{newCount} new listings</span>}
+            </div>
+          )}
+        </div>
+        {error && !newOpen && <p className="error">{error}</p>}
+        {feedback && <p className="success">{feedback}</p>}
         {loading ? (
           <p className="muted">Loading…</p>
         ) : searches.length === 0 ? (
           <p className="muted">No searches yet.</p>
         ) : (
-          <div className="watchlist-table-scroll">
-            <table className="compact-table">
-              <thead>
-                <tr>
-                  <th>Search</th>
-                  <th>Filters</th>
-                  <th>Listings</th>
-                  <th>Cheapest</th>
-                  <th>Status</th>
-                  <th>Last check</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {searches.map((search) => (
-                  <tr key={search.id} data-testid={`search-row-${search.id}`}>
-                    <td>
-                      <a
-                        href={`/searches/${search.id}`}
-                        className="product-link"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          onNavigate(`/searches/${search.id}`);
-                        }}
-                      >
+          <div className="search-card-grid">
+            {searches.map((search) => {
+              const href = `/searches/${search.id}`;
+              const openSearch = (event: MouseEvent) => {
+                event.preventDefault();
+                onNavigate(href);
+              };
+              return (
+                <article key={search.id} className="search-card" data-testid={`search-row-${search.id}`}>
+                  <header className="search-card-head">
+                    <div className="search-card-name">
+                      <a href={href} className="search-card-title" onClick={openSearch}>
                         {search.name}
                       </a>
-                      <div className="compact-cell-sub muted">{platformNames(search)}</div>
-                      <div className="compact-cell-sub muted">{ceilingLabel(search.alert_max_price)}</div>
-                      {search.unknown_policy !== "include" && (
-                        <div className="compact-cell-sub muted">
-                          Not stated: {UNKNOWN_POLICY_LABELS[search.unknown_policy].toLowerCase()}
-                        </div>
-                      )}
-                    </td>
-                    <td className="muted">{search.description.join(" · ")}</td>
-                    <td>
-                      {search.listing_count}
-                      {search.new_listing_count > 0 && (
-                        <span className="pill search-new-pill">{search.new_listing_count} new</span>
-                      )}
-                    </td>
-                    <td data-testid={`search-cheapest-${search.id}`}>
+                      <div className="muted search-card-platforms">{platformNames(search)}</div>
+                    </div>
+                    <span
+                      className={`status-badge status-${search.active ? statusTone(search.last_status) : "neutral"}`}
+                      title={search.last_error_message ?? undefined}
+                    >
+                      {statusLabel(search)}
+                    </span>
+                  </header>
+                  <div className="search-chips">
+                    {search.description
+                      .filter((line) => !line.startsWith("Auto: "))
+                      .map((line) => (
+                        <span key={line} className="chip">
+                          {line}
+                        </span>
+                      ))}
+                    <span className="chip chip-accent">{ceilingLabel(search.alert_max_price)}</span>
+                    {search.unknown_policy !== "include" && (
+                      <span className="chip">
+                        Not stated: {UNKNOWN_POLICY_LABELS[search.unknown_policy].toLowerCase()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="search-card-stats">
+                    <div className="search-stat">
+                      <span className="search-stat-label">Listings</span>
+                      <span className="search-stat-value">
+                        {search.listing_count}
+                        {search.new_listing_count > 0 && (
+                          <span className="badge badge-new">{search.new_listing_count} new</span>
+                        )}
+                      </span>
+                    </div>
+                    <div className="search-stat search-stat-wide" data-testid={`search-cheapest-${search.id}`}>
+                      <span className="search-stat-label">Cheapest</span>
                       {search.cheapest ? (
                         <>
-                          <strong>{formatEuro(search.cheapest.price)}</strong>
-                          {search.platforms.length > 1 && (
-                            <span className="muted"> · {platformLabel(search, search.cheapest.marketplace)}</span>
+                          <span className="search-stat-value">
+                            {formatEuro(search.cheapest.price)}
+                            <span className="muted search-stat-platform">
+                              {" "}
+                              · {platformLabel(search, search.cheapest.marketplace)}
+                            </span>
+                          </span>
+                          {search.cheapest.archive_id ? (
+                            <a
+                              href={`/archive/${search.cheapest.archive_id}`}
+                              className="search-cheapest-title"
+                              title={search.cheapest.title}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                onNavigate(`/archive/${search.cheapest?.archive_id}`);
+                              }}
+                            >
+                              {search.cheapest.title}
+                            </a>
+                          ) : (
+                            <a
+                              href={search.cheapest.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="search-cheapest-title"
+                              title={search.cheapest.title}
+                            >
+                              {search.cheapest.title}
+                            </a>
                           )}
-                          <div className="compact-cell-sub search-cheapest-title">
-                            {search.cheapest.archive_id ? (
-                              <a
-                                href={`/archive/${search.cheapest.archive_id}`}
-                                className="product-link"
-                                title={search.cheapest.title}
-                                onClick={(event) => {
-                                  event.preventDefault();
-                                  onNavigate(`/archive/${search.cheapest?.archive_id}`);
-                                }}
-                              >
-                                {search.cheapest.title}
-                              </a>
-                            ) : (
-                              <a
-                                href={search.cheapest.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="product-link"
-                                title={search.cheapest.title}
-                              >
-                                {search.cheapest.title}
-                              </a>
-                            )}
-                          </div>
                         </>
                       ) : (
-                        <span className="muted">–</span>
+                        <span className="search-stat-value muted">–</span>
                       )}
-                    </td>
-                    <td>
-                      <span
-                        className={`status-badge status-${search.active ? statusTone(search.last_status) : "neutral"}`}
-                        title={search.last_error_message ?? undefined}
-                      >
-                        {statusLabel(search)}
+                    </div>
+                    <div className="search-stat">
+                      <span className="search-stat-label">Last check</span>
+                      <span className="search-stat-value search-stat-small">
+                        {search.last_checked_at ? formatShortDate(search.last_checked_at) : "never"}
                       </span>
-                    </td>
-                    <td>{formatDate(search.last_checked_at)}</td>
-                    <td>
-                      <div className="row-actions row-actions-compact">
-                        <button
-                          type="button"
-                          className="secondary compact-button"
-                          onClick={() =>
-                            void runAction(
-                              () => patchMarketplaceSearch(search.id, { active: !search.active }),
-                              search.active ? `Paused “${search.name}”.` : `Resumed “${search.name}”.`,
-                            )
-                          }
-                        >
-                          {search.active ? "Pause" : "Resume"}
-                        </button>
-                        <button
-                          type="button"
-                          className="secondary compact-button"
-                          disabled={!search.active}
-                          onClick={() =>
-                            void runAction(
-                              () => triggerMarketplaceSearchCheckNow(search.id),
-                              `“${search.name}” will be checked within a minute.`,
-                            )
-                          }
-                        >
-                          Check now
-                        </button>
-                        <button
-                          type="button"
-                          className="secondary compact-button"
-                          onClick={() => {
-                            if (window.confirm(`Delete search “${search.name}” and its listings?`)) {
-                              void runAction(
-                                () => deleteMarketplaceSearch(search.id),
-                                `Deleted “${search.name}”.`,
-                              );
-                            }
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </div>
+                  </div>
+                  <footer className="search-card-actions">
+                    <a href={href} className="button-link" onClick={openSearch}>
+                      Open
+                    </a>
+                    <button
+                      type="button"
+                      className="secondary compact-button"
+                      onClick={() =>
+                        void runAction(
+                          () => patchMarketplaceSearch(search.id, { active: !search.active }),
+                          search.active ? `Paused “${search.name}”.` : `Resumed “${search.name}”.`,
+                        )
+                      }
+                    >
+                      {search.active ? "Pause" : "Resume"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary compact-button"
+                      disabled={!search.active}
+                      onClick={() =>
+                        void runAction(
+                          () => triggerMarketplaceSearchCheckNow(search.id),
+                          `“${search.name}” will be checked within a minute.`,
+                        )
+                      }
+                    >
+                      Check now
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary compact-button danger-text"
+                      onClick={() => {
+                        if (window.confirm(`Delete search “${search.name}” and its listings?`)) {
+                          void runAction(
+                            () => deleteMarketplaceSearch(search.id),
+                            `Deleted “${search.name}”.`,
+                          );
+                        }
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </footer>
+                </article>
+              );
+            })}
           </div>
         )}
+      </section>
+
+      <section className="panel compact-form">
+        <details
+          className="search-new"
+          open={newOpen}
+          onToggle={(event) => setNewOpen((event.currentTarget as HTMLDetailsElement).open)}
+        >
+          <summary>+ New search</summary>
+          <form onSubmit={handleSave}>
+            <div className="compact-grid search-form-grid">
+              <label>
+                Name
+                <input
+                  type="text"
+                  placeholder="Model 3 SR"
+                  value={name}
+                  required
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </label>
+            </div>
+            <SearchFilterFields value={filterForm} onChange={setFilterForm} />
+            <div className="compact-grid search-form-grid">
+              <label>
+                Exclude words (comma separated)
+                <input
+                  type="text"
+                  placeholder="schade, export, opkoper"
+                  value={keywords}
+                  onChange={(event) => setKeywords(event.target.value)}
+                />
+              </label>
+              <SellerSelect value={sellerType} onChange={setSellerType} />
+              <CeilingInput value={ceiling} onChange={setCeiling} />
+              <UnknownPolicySelect value={unknownPolicy} onChange={setUnknownPolicy} />
+              <div className="actions-row">
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={busy || !canPreview}
+                  onClick={() => void handlePreview()}
+                >
+                  Preview
+                </button>
+                <button type="submit" disabled={busy || !previewIsCurrent || !name.trim()}>
+                  Save search
+                </button>
+              </div>
+            </div>
+          </form>
+          <p className="muted">
+            Telegram only alerts for new listings and price drops at or below the price ceiling;
+            without a ceiling the search records listings but sends no alerts.
+          </p>
+          {busy && <p className="muted">Asking the platforms…</p>}
+          {preview && previewIsCurrent && <SearchPreviewCard preview={preview} />}
+          {error && <p className="error">{error}</p>}
+        </details>
       </section>
     </>
   );
