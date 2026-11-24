@@ -210,6 +210,8 @@ class MarketplaceSearch(Base):
         Text, nullable=False, default="[]"
     )
     seller_type: Mapped[str] = mapped_column(String(16), nullable=False, default="all")
+    # Telegram alerts only for listings at or below this price; NULL = no alerts.
+    alert_max_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     baseline_done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Highest numeric listing id known for this search. Unseen listings below

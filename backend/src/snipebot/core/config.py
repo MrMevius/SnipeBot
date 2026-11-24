@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     marketplace_check_jitter_seconds: int = 60
     marketplace_archive_enabled: bool = True
     marketplace_archive_dir: str = "/data/archive"
-    marketplace_archive_image_size: str = "85"
+    marketplace_archive_image_size: str = "original"
     marketplace_archive_delay_seconds: float = 3.0
     marketplace_archive_tick_budget_seconds: int = 45
     marketplace_archive_refresh_days: int = 7
@@ -98,7 +98,7 @@ def get_settings() -> Settings:
             "SNIPEBOT_MARKETPLACE_ARCHIVE_DIR", "/data/archive"
         ),
         marketplace_archive_image_size=_get_env(
-            "SNIPEBOT_MARKETPLACE_ARCHIVE_IMAGE_SIZE", "85"
+            "SNIPEBOT_MARKETPLACE_ARCHIVE_IMAGE_SIZE", "original"
         ),
         marketplace_archive_delay_seconds=float(
             _get_env("SNIPEBOT_MARKETPLACE_ARCHIVE_DELAY_SECONDS", "3")

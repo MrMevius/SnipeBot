@@ -1,6 +1,6 @@
 ## Context
 
-Listing pages (`/v/…/m<id>-…`) embed `window.__CONFIG__` JSON with title, price, gallery (`media.images[].base` with a `#` size placeholder), seller, statistics, highlights and, for cars, grouped labelled attributes. The description and the attributes of non-car listings are only rendered as HTML. Removed listings return HTTP 410. Image sizes: 82 (~5 KB) … 85 XXL (~50–80 KB) … 87 (~230 KB, original).
+Listing pages (`/v/…/m<id>-…`) embed `window.__CONFIG__` JSON with title, price, gallery (`media.images[].base` with a `#` size placeholder), seller, statistics, highlights and, for cars, grouped labelled attributes. The description and the attributes of non-car listings are only rendered as HTML. Removed listings return HTTP 410. Image sizes: 82 (~5 KB) … 85 XXL (~50–80 KB) … 87 (1280 px, re-encoded); without the `rule` query the image host returns the original upload (byte-identical to sizes 88+), which the archive stores by default.
 
 ## Decisions
 
@@ -11,6 +11,8 @@ Listing pages (`/v/…/m<id>-…`) embed `window.__CONFIG__` JSON with title, pr
 - **Queue**: `next_fetch_at` on the item. New listings, price/title changes in search results, reappearance and disappearance from a complete result set set it to now; success sets it to +7 days (+1 hour when photos failed). Per-item failures back off (retry settings) and stop after 5 until the weekly refresh. A block (403/429) pauses the whole archive with exponential backoff (in-process state of the worker).
 - **Throttling**: 3 s between listings, 0.2 s between photos, a 45 s budget per worker tick (worker interval 60 s), so price checks and search checks keep their cadence.
 - **Backfill**: each tick creates items for search listings without one, so listings recorded before this change (or while the archive was disabled) are archived too.
+
+- **Alert price ceiling**: `marketplace_searches.alert_max_price` (nullable). New listings and price drops alert only when the price is at or below it; listings without a price and searches without a ceiling never alert. Recording and archiving are unaffected. Changing the ceiling does not re-baseline. The column is added by `init_db` (SQLite `ALTER TABLE`) and by Alembic `20261124_0007`.
 
 ## Risks
 

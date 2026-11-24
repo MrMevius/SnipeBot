@@ -16,6 +16,7 @@ const savedSearch = {
   description: ["Categorie: Auto's › Volkswagen", "Model: Golf"],
   exclude_keywords: ["schade"],
   seller_type: "private",
+  alert_max_price: 45000,
   active: true,
   baseline_done: true,
   last_checked_at: "2026-11-23T10:00:00Z",
@@ -98,6 +99,7 @@ describe("Marktplaats searches", () => {
           url: SEARCH_URL,
           exclude_keywords: ["schade", "export"],
           seller_type: "private",
+          alert_max_price: 45000,
         });
         searches.push(savedSearch);
         return jsonResponse(savedSearch, 201);
@@ -121,6 +123,9 @@ describe("Marktplaats searches", () => {
       target: { value: "schade, export," },
     });
     fireEvent.change(screen.getByLabelText("Seller"), { target: { value: "private" } });
+    fireEvent.change(screen.getByLabelText("Alert price ceiling (€)"), {
+      target: { value: "€ 45.000" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
 
     expect(await screen.findByText("86 listings match")).toBeTruthy();
@@ -129,7 +134,9 @@ describe("Marktplaats searches", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save search" }));
 
     expect(await screen.findByText("Saved search “Golf GTI”.")).toBeTruthy();
-    expect((await screen.findByTestId("search-row-7")).textContent).toContain("1 new");
+    const row = (await screen.findByTestId("search-row-7")).textContent ?? "";
+    expect(row).toContain("1 new");
+    expect(row.replace(/\s/g, " ")).toContain("Alerts ≤ € 45.000");
   });
 
   it("shows listings of a search with new and price-drop markers", async () => {
@@ -186,6 +193,7 @@ describe("Marktplaats searches", () => {
         (screen.getByLabelText("Exclude words (comma separated)") as HTMLInputElement).value,
       ).toBe("schade"),
     );
+    expect((screen.getByLabelText("Alert price ceiling (€)") as HTMLInputElement).value).toBe("45.000");
   });
 
   it("sorts listings by the clicked column", async () => {

@@ -5,6 +5,10 @@ first successful check records the current listings silently (baseline).
 Later checks notify for listings that are genuinely new and for price drops on
 known listings.
 
+Telegram alerts are limited by the search's price ceiling (``alert_max_price``):
+new listings and price drops alert only when the price is at or below it, and a
+search without a ceiling sends no alerts. All listings are still recorded.
+
 Marktplaats re-lists paid "Dagtopper" ads at the top every day, so an unseen
 listing is not necessarily a new one. Listing ids increase over time: an unseen
 listing counts as new when its id is above the highest id known for the search,
@@ -49,6 +53,7 @@ from snipebot.persistence.models import (
 logger = logging.getLogger(__name__)
 
 MAX_KEYWORDS = 50
+_UNSET = object()
 MAX_ALERTS_PER_CHECK = 10
 NEW_LISTING_WINDOW = timedelta(hours=48)
 DUE_BATCH_SIZE = 10
@@ -132,6 +137,7 @@ def create_search(
     url: str,
     exclude_keywords: list[str] | None,
     seller_type: str,
+    alert_max_price: Decimal | None = None,
 ) -> MarketplaceSearch:
     clean_name = name.strip()
     if not clean_name:
@@ -148,6 +154,7 @@ def create_search(
         description_json=json.dumps(preview.description),
         exclude_keywords_json=json.dumps(keywords),
         seller_type=seller_type,
+        alert_max_price=_validate_ceiling(alert_max_price),
         active=True,
         baseline_done=False,
         last_status="pending",
@@ -174,8 +181,13 @@ def update_search(
     exclude_keywords: list[str] | None = None,
     seller_type: str | None = None,
     active: bool | None = None,
+    alert_max_price: Decimal | None | object = _UNSET,
 ) -> MarketplaceSearch:
     filters_changed = False
+
+    if alert_max_price is not _UNSET:
+        # Only affects which future events alert; no new baseline needed.
+        search.alert_max_price = _validate_ceiling(alert_max_price)
 
     if name is not None:
         clean_name = name.strip()
@@ -421,14 +433,14 @@ def check_search(
             row = _create_listing_row(db_session, search, listing, now, baseline)
             if baseline:
                 continue
-            if _counts_as_new(listing, watermark, previous_full_coverage):
-                intents.append(_AlertIntent(kind="new_listing", row=row, listing=listing))
-            else:
+            if not _counts_as_new(listing, watermark, previous_full_coverage):
                 logger.info(
                     "marketplace_search.older_listing search_id=%s item_id=%s",
                     search.id,
                     listing.item_id,
                 )
+            elif _within_ceiling(search, listing.price):
+                intents.append(_AlertIntent(kind="new_listing", row=row, listing=listing))
             continue
 
         old_price = row.current_price
@@ -437,6 +449,7 @@ def check_search(
             listing.price is not None
             and old_price is not None
             and listing.price < old_price
+            and _within_ceiling(search, listing.price)
         ):
             intents.append(
                 _AlertIntent(kind="price_drop", row=row, listing=listing, old_price=old_price)
@@ -498,6 +511,19 @@ def _counts_as_new(
         return True
     numeric_id = listing.numeric_id
     return numeric_id is not None and numeric_id > watermark
+
+
+def _within_ceiling(search: MarketplaceSearch, price: Decimal | None) -> bool:
+    ceiling = search.alert_max_price
+    return ceiling is not None and price is not None and price <= ceiling
+
+
+def _validate_ceiling(value: Decimal | None) -> Decimal | None:
+    if value is None:
+        return None
+    if value <= 0:
+        raise ValueError("The price ceiling must be positive")
+    return value.quantize(Decimal("0.01"))
 
 
 def _is_excluded(listing: Listing, keywords: list[str]) -> bool:

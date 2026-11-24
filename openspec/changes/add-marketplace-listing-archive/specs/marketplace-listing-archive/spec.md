@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Found listings are archived locally
-The system SHALL archive every listing recorded by a saved search, including listings recorded silently by the first check, with its details and all photos.
+The system SHALL archive every listing recorded by a saved search, including listings recorded silently by the first check, with its details and all photos in their original upload quality.
 
 #### Scenario: Archive a new listing
 - **WHEN** a search check records a listing that is not archived yet
@@ -49,3 +49,18 @@ The system SHALL provide an archive overview across searches and a listing page 
 #### Scenario: Delete from archive
 - **WHEN** a client deletes an archived listing
 - **THEN** its rows and photo files are removed
+
+### Requirement: Telegram alerts respect a price ceiling
+The system SHALL send Telegram alerts for a saved search only for listings priced at or below the search's alert price ceiling.
+
+#### Scenario: New listing above the ceiling
+- **WHEN** a new listing is priced above the ceiling
+- **THEN** it is recorded and archived without an alert
+
+#### Scenario: Price drop to or below the ceiling
+- **WHEN** a known listing's price drops to or below the ceiling
+- **THEN** a price-drop alert is sent, also for each further drop
+
+#### Scenario: No ceiling
+- **WHEN** a search has no ceiling
+- **THEN** no alerts are sent for it

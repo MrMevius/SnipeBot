@@ -543,6 +543,7 @@ export type MarketplaceSearch = {
   description: string[];
   exclude_keywords: string[];
   seller_type: SellerType;
+  alert_max_price: number | null;
   active: boolean;
   baseline_done: boolean;
   last_checked_at: string | null;
@@ -560,6 +561,7 @@ export type MarketplaceSearchCreatePayload = {
   url: string;
   exclude_keywords: string[];
   seller_type: SellerType;
+  alert_max_price: number | null;
 };
 
 export type MarketplaceSearchUpdatePayload = {
@@ -567,6 +569,7 @@ export type MarketplaceSearchUpdatePayload = {
   exclude_keywords?: string[];
   seller_type?: SellerType;
   active?: boolean;
+  alert_max_price?: number | null;
 };
 
 export type MarketplaceListing = {

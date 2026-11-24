@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -71,6 +72,7 @@ class SearchCreateRequest(BaseModel):
     url: str = Field(min_length=1, max_length=4096)
     exclude_keywords: list[str] = Field(default_factory=list, max_length=50)
     seller_type: SellerType = "all"
+    alert_max_price: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
 
 
 class SearchUpdateRequest(BaseModel):
@@ -78,6 +80,8 @@ class SearchUpdateRequest(BaseModel):
     exclude_keywords: list[str] | None = Field(default=None, max_length=50)
     seller_type: SellerType | None = None
     active: bool | None = None
+    # null clears the ceiling (no alerts); omit the field to keep it.
+    alert_max_price: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
 
 
 class SearchResponse(BaseModel):
@@ -88,6 +92,7 @@ class SearchResponse(BaseModel):
     description: list[str]
     exclude_keywords: list[str]
     seller_type: str
+    alert_max_price: float | None
     active: bool
     baseline_done: bool
     last_checked_at: datetime | None
@@ -150,6 +155,9 @@ def _to_response(db_session: Session, search: MarketplaceSearch) -> SearchRespon
         description=get_search_description(search),
         exclude_keywords=get_exclude_keywords(search),
         seller_type=search.seller_type,
+        alert_max_price=float(search.alert_max_price)
+        if search.alert_max_price is not None
+        else None,
         active=search.active,
         baseline_done=search.baseline_done,
         last_checked_at=search.last_checked_at,
@@ -263,6 +271,7 @@ def post_search(
             url=payload.url,
             exclude_keywords=payload.exclude_keywords,
             seller_type=payload.seller_type,
+            alert_max_price=payload.alert_max_price,
         )
     except MarktplaatsError as exc:
         _raise_for_marktplaats(exc)
@@ -300,6 +309,11 @@ def patch_search(
             exclude_keywords=payload.exclude_keywords,
             seller_type=payload.seller_type,
             active=payload.active,
+            **(
+                {"alert_max_price": payload.alert_max_price}
+                if "alert_max_price" in payload.model_fields_set
+                else {}
+            ),
         )
     except MarktplaatsError as exc:
         _raise_for_marktplaats(exc)

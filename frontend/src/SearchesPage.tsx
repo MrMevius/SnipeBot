@@ -46,6 +46,33 @@ function parseKeywords(value: string): string[] {
     .filter((keyword) => keyword.length > 0);
 }
 
+// Accepts Dutch notation: "45.000", "€ 45.000" or "45000,50".
+export function parseEuroAmount(value: string): number | null {
+  const cleaned = value.replace(/[€\s.]/g, "").replace(",", ".");
+  if (!cleaned) return null;
+  const amount = Number(cleaned);
+  return Number.isFinite(amount) && amount > 0 ? amount : Number.NaN;
+}
+
+function ceilingLabel(value: number | null): string {
+  return value === null ? "Alerts off (no price ceiling)" : `Alerts ≤ ${formatEuro(value)}`;
+}
+
+function CeilingInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <label>
+      Alert price ceiling (€)
+      <input
+        type="text"
+        inputMode="decimal"
+        placeholder="45.000"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
 function statusTone(status: string): string {
   if (status === "ok") return "ok";
   if (status === "pending") return "pending";
@@ -155,6 +182,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
   const [url, setUrl] = useState("");
   const [keywords, setKeywords] = useState("");
   const [sellerType, setSellerType] = useState<SellerType>("all");
+  const [ceiling, setCeiling] = useState("");
   const [preview, setPreview] = useState<MarketplaceSearchPreview | null>(null);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -198,6 +226,11 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
       await handlePreview();
       return;
     }
+    const alertMaxPrice = parseEuroAmount(ceiling);
+    if (Number.isNaN(alertMaxPrice)) {
+      setError("Enter the price ceiling as an amount in euros, e.g. 45.000.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -206,12 +239,14 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
         url: url.trim(),
         exclude_keywords: parseKeywords(keywords),
         seller_type: sellerType,
+        alert_max_price: alertMaxPrice,
       });
       setFeedback(`Saved search “${created.name}”.`);
       setName("");
       setUrl("");
       setKeywords("");
       setSellerType("all");
+      setCeiling("");
       setPreview(null);
       setPreviewKey(null);
       await load();
@@ -273,6 +308,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
               />
             </label>
             <SellerSelect value={sellerType} onChange={setSellerType} />
+            <CeilingInput value={ceiling} onChange={setCeiling} />
             <div className="actions-row">
               <button
                 type="button"
@@ -288,6 +324,10 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
             </div>
           </div>
         </form>
+        <p className="muted">
+          Telegram only alerts for new listings and price drops at or below the price ceiling;
+          without a ceiling the search records listings but sends no alerts.
+        </p>
         {busy && <p className="muted">Asking Marktplaats…</p>}
         {preview && previewIsCurrent && <SearchPreviewCard preview={preview} />}
         {error && <p className="error">{error}</p>}
@@ -328,6 +368,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
                         {search.name}
                       </a>
                       <div className="compact-cell-sub muted">{SELLER_LABELS[search.seller_type]}</div>
+                      <div className="compact-cell-sub muted">{ceilingLabel(search.alert_max_price)}</div>
                     </td>
                     <td className="muted">{search.description.join(" · ")}</td>
                     <td>
@@ -436,6 +477,7 @@ function SearchDetail({
   const [name, setName] = useState("");
   const [keywords, setKeywords] = useState("");
   const [sellerType, setSellerType] = useState<SellerType>("all");
+  const [ceiling, setCeiling] = useState("");
   const [showGone, setShowGone] = useState(false);
   const [listingSort, setListingSort] = useState<ListingSort>({ column: "first_seen", direction: "desc" });
   const [busy, setBusy] = useState(false);
@@ -451,6 +493,11 @@ function SearchDetail({
       setName(searchPayload.name);
       setKeywords(searchPayload.exclude_keywords.join(", "));
       setSellerType(searchPayload.seller_type);
+      setCeiling(
+        searchPayload.alert_max_price === null
+          ? ""
+          : searchPayload.alert_max_price.toLocaleString("nl-NL"),
+      );
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -463,6 +510,11 @@ function SearchDetail({
 
   async function handleSave(event: FormEvent) {
     event.preventDefault();
+    const alertMaxPrice = parseEuroAmount(ceiling);
+    if (Number.isNaN(alertMaxPrice)) {
+      setError("Enter the price ceiling as an amount in euros, e.g. 45.000.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -470,6 +522,7 @@ function SearchDetail({
         name: name.trim(),
         exclude_keywords: parseKeywords(keywords),
         seller_type: sellerType,
+        alert_max_price: alertMaxPrice,
       });
       setFeedback("Saved.");
       await load();
@@ -558,6 +611,7 @@ function SearchDetail({
                   />
                 </label>
                 <SellerSelect value={sellerType} onChange={setSellerType} />
+                <CeilingInput value={ceiling} onChange={setCeiling} />
                 <button type="submit" disabled={busy}>
                   Save changes
                 </button>
@@ -565,6 +619,7 @@ function SearchDetail({
             </form>
             <p className="muted">
               Changing the exclude words or seller records the current listings silently again.
+              Telegram alerts only for listings at or below the price ceiling; empty = no alerts.
             </p>
           </>
         )}

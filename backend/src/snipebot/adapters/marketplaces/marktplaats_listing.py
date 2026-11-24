@@ -32,7 +32,8 @@ from snipebot.adapters.marketplaces.marktplaats import (
 )
 
 IMAGE_HOSTS = {"images.marktplaats.com"}
-DEFAULT_IMAGE_SIZE = "85"
+# "original" drops the resize rule: the uploaded file, byte-identical to the largest size.
+DEFAULT_IMAGE_SIZE = "original"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 _CONFIG_MARKER = re.compile(r"window\.__CONFIG__\s*=\s*")
@@ -276,7 +277,10 @@ def _gallery_images(gallery: dict[str, Any], image_size: str) -> list[ListingIma
 
 
 def _image_url(base: str, image_size: str) -> str:
-    url = base.replace("#", image_size)
+    if image_size == "original":
+        url = base.split("?", 1)[0]
+    else:
+        url = base.replace("#", image_size)
     return f"https:{url}" if url.startswith("//") else url
 
 

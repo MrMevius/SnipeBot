@@ -14,9 +14,13 @@
 - [x] 3.1 `/archive` routes: list (search, filters, sort, pagination, usage), detail with versions, photo files, refresh, delete; `archive_id` on search listings.
 - [x] 3.2 Archive overview and listing page (gallery, description, attributes, seller, price chart, versions); search listings link to the archive page.
 
-## 4. Verification
+## 4. Alert price ceiling
 
-- [x] 4.1 Backend tests for parsing, sanitizing, worker, versions, gone/revive, backoff, throttling, backfill and API.
-- [x] 4.2 Frontend tests for overview and listing page.
-- [x] 4.3 Live check against marktplaats.nl with a temporary database (10 listings, 256 photos, stable re-fetch without new versions).
-- [ ] 4.4 Production check on 503-web: backfill of existing listings and photo serving through the frontend proxy.
+- [x] 4.1 `alert_max_price` per search (create, edit, overview); alerts for new listings and drops only at or below it; none without a ceiling.
+
+## 5. Verification
+
+- [x] 5.1 Backend tests for parsing, sanitizing, worker, versions, gone/revive, backoff, throttling, backfill and API.
+- [x] 5.2 Frontend tests for overview and listing page.
+- [x] 5.3 Live check against marktplaats.nl with a temporary database (10 listings, 256 photos, stable re-fetch without new versions).
+- [ ] 5.4 Production check on 503-web: backfill of existing listings and photo serving through the frontend proxy.

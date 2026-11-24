@@ -94,7 +94,10 @@ def test_parse_car_listing_page() -> None:
         },
     ]
     assert [image.key for image in detail.images] == ["media-a", "media-b"]
-    assert detail.images[0].url == (
+    # Original upload by default: the resize rule is dropped.
+    assert detail.images[0].url == "https://images.marktplaats.com/api/v1/listing/images/a"
+    resized = parse_listing_page(listing_page_html(5), url=LISTING_URL, image_size="85")
+    assert resized.images[0].url == (
         "https://images.marktplaats.com/api/v1/listing/images/a?rule=ecg_mp_eps$_85.jpg"
     )
     assert detail.seller["name"] == "Testverkoper"
