@@ -16,6 +16,7 @@ from snipebot.adapters.marketplaces.marktplaats import MarktplaatsClient, Marktp
 from snipebot.api.searches import get_marktplaats_client
 from snipebot.core.config import get_settings
 from snipebot.domain.marketplace_searches import (
+    cheapest_listing,
     create_search,
     format_euro,
     run_due_marketplace_searches,
@@ -316,6 +317,26 @@ def test_alert_flood_is_capped_with_summary() -> None:
     assert notifier.messages[-1].body == "+2 meer nieuwe meldingen; bekijk ze in SnipeBot."
 
 
+def test_cheapest_listing_skips_gone_and_unpriced_listings() -> None:
+    _reset_tables()
+    fetcher = FakeFetcher()
+    notifier = CollectingNotifier()
+    _create(fetcher)
+
+    _run(
+        fetcher,
+        notifier,
+        search_payload([listing(300, price_cents=0), listing(200, price_cents=900000), listing(100)]),
+    )
+    # m200 disappears from the complete result set and is marked gone.
+    _run(fetcher, notifier, search_payload([listing(300, price_cents=0), listing(100)]))
+
+    with get_session_factory()() as session:
+        search = session.scalars(select(MarketplaceSearch)).one()
+        cheapest = cheapest_listing(session, search)
+    assert cheapest.item_id == "m100"
+
+
 def test_format_euro() -> None:
     assert format_euro(Decimal("21000")) == "€ 21.000"
     assert format_euro(Decimal("1234.5")) == "€ 1.234,50"
@@ -329,7 +350,9 @@ def _api_client(fetcher: FakeFetcher) -> TestClient:
 def test_api_preview_create_list_and_listings() -> None:
     _reset_tables()
     fetcher = FakeFetcher()
-    fetcher.default_payload = search_payload([listing(200), listing(100)], total=86)
+    fetcher.default_payload = search_payload(
+        [listing(200), listing(100, price_cents=1400000)], total=86
+    )
     client = _api_client(fetcher)
     try:
         preview = client.post("/searches/preview", json={"url": SEARCH_URL, "seller_type": "private"})
@@ -367,12 +390,14 @@ def test_api_preview_create_list_and_listings() -> None:
         assert [(item["name"], item["listing_count"], item["new_listing_count"]) for item in listed] == [
             ("Golf GTI", 2, 0)
         ]
+        assert listed[0]["cheapest"]["item_id"] == "m100"
+        assert listed[0]["cheapest"]["price"] == 14000.0
 
         listings = client.get(f"/searches/{search['id']}/listings").json()["items"]
         assert listings[0]["seller_type"] == "private"
         assert listings[0]["attributes"]["fuel"] == "Benzine"
         assert listings[0]["distance_km"] == 12
-        assert listings[0]["price_history"][0]["price"] == 15000.0
+        assert listings[0]["price_history"][0]["price"] == 14000.0
         assert listings[0]["is_new"] is False
     finally:
         app.dependency_overrides.clear()

@@ -20,6 +20,7 @@ from snipebot.api.deps import (
 from snipebot.core.metrics import metrics
 from snipebot.domain.marketplace_archive import archive_ids_for
 from snipebot.domain.marketplace_searches import (
+    cheapest_listing,
     create_search,
     delete_search,
     get_exclude_keywords,
@@ -84,6 +85,14 @@ class SearchUpdateRequest(BaseModel):
     alert_max_price: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
 
 
+class CheapestListingResponse(BaseModel):
+    item_id: str
+    title: str
+    url: str
+    price: float
+    archive_id: int | None
+
+
 class SearchResponse(BaseModel):
     id: int
     marketplace: str
@@ -102,6 +111,7 @@ class SearchResponse(BaseModel):
     last_total_count: int | None
     listing_count: int
     new_listing_count: int
+    cheapest: CheapestListingResponse | None
     created_at: datetime
 
 
@@ -145,6 +155,22 @@ def _raise_for_marktplaats(exc: MarktplaatsError) -> None:
     raise HTTPException(status_code=status, detail=str(exc)) from exc
 
 
+def _cheapest_response(
+    db_session: Session, search: MarketplaceSearch
+) -> CheapestListingResponse | None:
+    row = cheapest_listing(db_session, search)
+    if row is None or row.current_price is None:
+        return None
+    archive_ids = archive_ids_for(db_session, owner_id=search.owner_id, item_ids=[row.item_id])
+    return CheapestListingResponse(
+        item_id=row.item_id,
+        title=row.title,
+        url=row.url,
+        price=float(row.current_price),
+        archive_id=archive_ids.get(row.item_id),
+    )
+
+
 def _to_response(db_session: Session, search: MarketplaceSearch) -> SearchResponse:
     listing_count, new_count = search_listing_counts(db_session, search)
     return SearchResponse(
@@ -167,6 +193,7 @@ def _to_response(db_session: Session, search: MarketplaceSearch) -> SearchRespon
         last_total_count=search.last_total_count,
         listing_count=listing_count,
         new_listing_count=new_count,
+        cheapest=_cheapest_response(db_session, search),
         created_at=search.created_at,
     )
 

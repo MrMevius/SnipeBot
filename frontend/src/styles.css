@@ -1013,6 +1013,13 @@ img.product-thumb {
   border-color: rgba(46, 160, 67, 0.4);
 }
 
+.search-cheapest-title {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .search-listing-gone {
   opacity: 0.55;
 }

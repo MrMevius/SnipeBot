@@ -296,6 +296,20 @@ def search_listing_counts(db_session: Session, search: MarketplaceSearch) -> tup
     return visible, new
 
 
+def cheapest_listing(db_session: Session, search: MarketplaceSearch) -> MarketplaceListing | None:
+    """Lowest-priced listing that is still online (listings without a price are skipped)."""
+    return db_session.scalar(
+        select(MarketplaceListing)
+        .where(
+            MarketplaceListing.search_id == search.id,
+            MarketplaceListing.gone_at.is_(None),
+            MarketplaceListing.current_price.is_not(None),
+        )
+        .order_by(MarketplaceListing.current_price.asc(), MarketplaceListing.id.asc())
+        .limit(1)
+    )
+
+
 def is_listing_new(listing: MarketplaceListing, now: datetime | None = None) -> bool:
     return _is_new(listing.from_baseline, listing.first_seen_at, now or datetime.now(UTC))
 
