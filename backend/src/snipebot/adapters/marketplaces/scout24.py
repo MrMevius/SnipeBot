@@ -156,6 +156,16 @@ def battery_kwh(text: str) -> float | None:
     return value if 10 <= value <= 250 else None
 
 
+def vehicle_title(vehicle: dict[str, Any]) -> str:
+    """Make, model and version; the model is left out when the version repeats it."""
+    make = str(vehicle.get("make") or "").strip()
+    model = str(vehicle.get("model") or "").strip()
+    version = str(vehicle.get("modelVersionInput") or "").strip()
+    if model and version.lower().startswith(model.lower()):
+        model = ""
+    return " ".join(part for part in (make, model, version) if part)
+
+
 def city_label(location: dict[str, Any], site: Scout24Site) -> str | None:
     """City, with the country code when the car is abroad ("Dilbeek (BE)")."""
     city = str(location["city"]).title() if location.get("city") else None
@@ -293,11 +303,7 @@ def parse_listing(raw: Any, site: Scout24Site) -> Listing | None:
         return None
     vehicle = raw.get("vehicle") or {}
     tracking = raw.get("tracking") or {}
-    title = " ".join(
-        str(part).strip()
-        for part in (vehicle.get("make"), vehicle.get("model"), vehicle.get("modelVersionInput"))
-        if part
-    ) or str(raw.get("title") or "").strip()
+    title = vehicle_title(vehicle) or str(raw.get("title") or "").strip()
     if not title:
         return None
 

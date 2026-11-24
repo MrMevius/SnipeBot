@@ -463,3 +463,14 @@ def test_switching_autotrack_to_autoscout24_keeps_listings_and_archive(settings)
     # Known photos are not downloaded again after the move.
     assert all(uuid(1) not in url for url in autoscout.image_requests)
     assert len([url for url in autoscout.image_requests if uuid(2) in url]) == 3
+
+
+def test_vehicle_title_does_not_repeat_the_model() -> None:
+    from snipebot.adapters.marketplaces.scout24 import vehicle_title
+
+    assert vehicle_title({"make": "Tesla", "model": "Model 3", "modelVersionInput": "Model 3 Premium LR"}) == (
+        "Tesla Model 3 Premium LR"
+    )
+    assert vehicle_title({"make": "Tesla", "model": "Model 3", "modelVersionInput": "RWD 60 kWh"}) == (
+        "Tesla Model 3 RWD 60 kWh"
+    )

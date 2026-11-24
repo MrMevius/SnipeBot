@@ -6,6 +6,7 @@ import {
   MarketplaceSearchPreview,
   PlatformInfo,
   SearchFilters,
+  SearchSource,
   SellerType,
   TaxonomyOption,
   UnknownPolicy,
@@ -106,6 +107,29 @@ function CeilingInput({ value, onChange }: { value: string; onChange: (value: st
       />
     </label>
   );
+}
+
+// "24-11 13:56"; the year is added for other years.
+function formatShortDate(value: string): string {
+  const date = new Date(value.endsWith("Z") || value.includes("+") ? value : `${value}Z`);
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  const day = date.toLocaleDateString("nl-NL", {
+    day: "2-digit",
+    month: "2-digit",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+  const time = date.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+  return `${day} ${time}`;
+}
+
+function sourceStatus(source: SearchSource): string {
+  if (source.last_status === "pending") return "Waiting";
+  if (source.last_status === "ok") return source.baseline_done ? "OK" : "Recording";
+  return source.last_status;
+}
+
+function sourceTone(source: SearchSource): string {
+  return statusTone(source.last_status);
 }
 
 function statusTone(status: string): string {
@@ -916,10 +940,13 @@ function SearchDetail({
   const hasDetails = listings.some((listing) => carDetails(listing.attributes) !== "");
   const multiPlatform = (search?.platforms.length ?? 0) > 1;
 
-  function sortHeader(column: ListingSortColumn, label: string) {
+  function sortHeader(column: ListingSortColumn, label: string, className?: string) {
     const active = listingSort.column === column;
     return (
-      <th aria-sort={active ? (listingSort.direction === "asc" ? "ascending" : "descending") : undefined}>
+      <th
+        className={className}
+        aria-sort={active ? (listingSort.direction === "asc" ? "ascending" : "descending") : undefined}
+      >
         <button
           type="button"
           className="sort-button"
@@ -953,64 +980,85 @@ function SearchDetail({
         </a>
         {search && (
           <>
-            <h1>{search.name}</h1>
-            <ul className="search-description">
-              {search.description.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-            <ul className="search-sources">
+            <div className="search-head">
+              <h1>{search.name}</h1>
+              <div className="search-chips">
+                {search.description.map((line) => (
+                  <span key={line} className="chip">
+                    {line}
+                  </span>
+                ))}
+                <span className="chip chip-accent">{ceilingLabel(search.alert_max_price)}</span>
+                {search.unknown_policy !== "include" && (
+                  <span className="chip">Not stated: {UNKNOWN_POLICY_LABELS[search.unknown_policy].toLowerCase()}</span>
+                )}
+                {!search.active && <span className="chip">Paused</span>}
+              </div>
+            </div>
+            <div className="search-source-grid">
               {search.platforms.map((platform) => (
-                <li key={platform.marketplace} data-testid={`source-${platform.marketplace}`}>
-                  <strong>{platform.label}</strong>: {platform.last_total_count ?? "?"} results at last check (
-                  {formatDate(platform.last_checked_at)})
-                  {!platform.baseline_done && " · recording listings"}
-                  {platform.last_error_message ? ` · ${platform.last_error_message}` : ""}
-                  {postFilterNote(platform.post_filters) && ` · ${postFilterNote(platform.post_filters)}`}
-                </li>
+                <div key={platform.marketplace} className="search-source-card" data-testid={`source-${platform.marketplace}`}>
+                  <div className="search-source-head">
+                    <strong>{platform.label}</strong>
+                    <span className={`status-badge status-${sourceTone(platform)}`}>{sourceStatus(platform)}</span>
+                  </div>
+                  <div className="search-source-count">
+                    {platform.last_total_count ?? "–"} <span className="muted">results</span>
+                  </div>
+                  <div className="muted search-source-meta">Last check {formatDate(platform.last_checked_at)}</div>
+                  {postFilterNote(platform.post_filters) && (
+                    <div className="muted search-source-meta">{postFilterNote(platform.post_filters)}</div>
+                  )}
+                  {platform.last_error_message && (
+                    <div className="error search-source-meta">{platform.last_error_message}</div>
+                  )}
+                </div>
               ))}
-            </ul>
+            </div>
             {search.filters === null && (
               <p className="muted">
                 This search was created from a Marktplaats URL. Choose a make and model to switch it to
                 filters and add platforms.
               </p>
             )}
-            <form onSubmit={handleSave}>
-              <div className="compact-grid search-form-grid">
-                <label>
-                  Name
-                  <input
-                    type="text"
-                    value={name}
-                    required
-                    onChange={(event) => setName(event.target.value)}
-                  />
-                </label>
-              </div>
-              <SearchFilterFields value={filterForm} onChange={setFilterForm} />
-              <div className="compact-grid search-form-grid">
-                <label>
-                  Exclude words (comma separated)
-                  <input
-                    type="text"
-                    value={keywords}
-                    onChange={(event) => setKeywords(event.target.value)}
-                  />
-                </label>
-                <SellerSelect value={sellerType} onChange={setSellerType} />
-                <CeilingInput value={ceiling} onChange={setCeiling} />
-                <UnknownPolicySelect value={unknownPolicy} onChange={setUnknownPolicy} />
-                <button type="submit" disabled={busy}>
-                  Save changes
-                </button>
-              </div>
-            </form>
-            <p className="muted">
-              Changing filters, exclude words or seller records the current listings silently again;
-              a newly added platform starts the same way.
-              Telegram alerts only for listings at or below the price ceiling; empty = no alerts.
-            </p>
+            <details className="search-edit">
+              <summary>Edit search</summary>
+              <form onSubmit={handleSave}>
+                <div className="compact-grid search-form-grid">
+                  <label>
+                    Name
+                    <input
+                      type="text"
+                      value={name}
+                      required
+                      onChange={(event) => setName(event.target.value)}
+                    />
+                  </label>
+                </div>
+                <SearchFilterFields value={filterForm} onChange={setFilterForm} />
+                <div className="compact-grid search-form-grid">
+                  <label>
+                    Exclude words (comma separated)
+                    <input
+                      type="text"
+                      value={keywords}
+                      onChange={(event) => setKeywords(event.target.value)}
+                    />
+                  </label>
+                  <SellerSelect value={sellerType} onChange={setSellerType} />
+                  <CeilingInput value={ceiling} onChange={setCeiling} />
+                  <UnknownPolicySelect value={unknownPolicy} onChange={setUnknownPolicy} />
+                  <button type="submit" disabled={busy}>
+                    Save changes
+                  </button>
+                </div>
+              </form>
+              <p className="muted">
+                Changing filters, exclude words or seller records the current listings silently again;
+                a newly added platform starts the same way.
+                Telegram alerts only for listings at or below the price ceiling; empty = no alerts.
+              </p>
+            </details>
           </>
         )}
         {error && <p className="error">{error}</p>}
@@ -1018,7 +1066,7 @@ function SearchDetail({
       </section>
 
       <section className="panel">
-        <div className="watchlist-toolbar">
+        <div className="listings-toolbar">
           <h2>Listings ({visible.length})</h2>
           {goneCount > 0 && (
             <label className="toggle-row">
@@ -1035,17 +1083,17 @@ function SearchDetail({
           <p className="muted">No listings recorded yet.</p>
         ) : (
           <div className="watchlist-table-scroll">
-            <table className="compact-table">
+            <table className="compact-table listings-table">
               <thead>
                 <tr>
                   {sortHeader("title", "Listing")}
-                  {sortHeader("price", "Price")}
-                  {hasYear && sortHeader("year", "Year")}
-                  {hasMileage && sortHeader("mileage", "Mileage")}
+                  {sortHeader("price", "Price", "num")}
+                  {hasYear && sortHeader("year", "Year", "num")}
+                  {hasMileage && sortHeader("mileage", "Mileage", "num")}
                   {hasDetails && <th>Details</th>}
                   {multiPlatform && <th>Platform</th>}
                   {sortHeader("distance", "Location")}
-                  {sortHeader("first_seen", "First seen")}
+                  {sortHeader("first_seen", "First seen", "num")}
                 </tr>
               </thead>
               <tbody>
@@ -1056,15 +1104,18 @@ function SearchDetail({
                     data-testid={`listing-row-${listing.item_id}`}
                   >
                     <td>
-                      <div className="product-cell">
+                      <div className="listing-cell">
                         {listing.image_url ? (
-                          <img className="product-thumb" src={listing.image_url} alt="" loading="lazy" />
-                        ) : null}
-                        <div>
+                          <img className="listing-thumb" src={listing.image_url} alt="" loading="lazy" />
+                        ) : (
+                          <div className="listing-thumb" />
+                        )}
+                        <div className="listing-main">
                           {listing.archive_id ? (
                             <a
                               href={`/archive/${listing.archive_id}`}
-                              className="product-link"
+                              className="product-link listing-title"
+                              title={listing.title}
                               onClick={(event) => {
                                 if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) {
                                   return;
@@ -1076,35 +1127,51 @@ function SearchDetail({
                               {listing.title}
                             </a>
                           ) : (
-                            <a href={listing.url} target="_blank" rel="noreferrer" className="product-link">
+                            <a
+                              href={listing.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="product-link listing-title"
+                              title={listing.title}
+                            >
                               {listing.title}
                             </a>
                           )}
-                          {listing.is_new && <span className="pill search-new-pill">new</span>}
-                          {listing.gone_at && <span className="pill">gone</span>}
-                          {listing.unverified_filters.length > 0 && (
-                            <span
-                              className="pill"
-                              title="The listing does not state this; it is kept until it does."
-                            >
-                              {listing.unverified_filters.map((key) => FILTER_LABELS[key] ?? key).join(", ")} unknown
-                            </span>
+                          {(listing.is_new || listing.gone_at || listing.unverified_filters.length > 0) && (
+                            <div className="listing-badges">
+                              {listing.is_new && <span className="badge badge-new">new</span>}
+                              {listing.gone_at && <span className="badge">gone</span>}
+                              {listing.unverified_filters.length > 0 && (
+                                <span
+                                  className="badge badge-warn"
+                                  title="The listing does not state this value."
+                                >
+                                  {listing.unverified_filters.map((key) => FILTER_LABELS[key] ?? key).join(", ")} unknown
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>
                     </td>
-                    <td>
+                    <td className="num">
                       <ListingPrice listing={listing} />
                     </td>
-                    {hasYear && <td>{numericAttribute(listing, "constructionYear") ?? "–"}</td>}
+                    {hasYear && <td className="num">{numericAttribute(listing, "constructionYear") ?? "–"}</td>}
                     {hasMileage && (
-                      <td>
+                      <td className="num">
                         {numericAttribute(listing, "mileage")?.toLocaleString("nl-NL") ?? "–"}
                         {numericAttribute(listing, "mileage") !== null ? " km" : ""}
                       </td>
                     )}
                     {hasDetails && <td>{carDetails(listing.attributes) || "–"}</td>}
-                    {multiPlatform && <td>{search ? platformLabel(search, listing.marketplace) : listing.marketplace}</td>}
+                    {multiPlatform && (
+                      <td>
+                        <span className={`platform-badge platform-${listing.marketplace}`}>
+                          {search ? platformLabel(search, listing.marketplace) : listing.marketplace}
+                        </span>
+                      </td>
+                    )}
                     <td>
                       {listing.city ?? "–"}
                       {listing.distance_km !== null ? ` (${listing.distance_km} km)` : ""}
@@ -1114,7 +1181,7 @@ function SearchDetail({
                         </div>
                       )}
                     </td>
-                    <td>{formatDate(listing.first_seen_at)}</td>
+                    <td className="num muted">{formatShortDate(listing.first_seen_at)}</td>
                   </tr>
                 ))}
               </tbody>
