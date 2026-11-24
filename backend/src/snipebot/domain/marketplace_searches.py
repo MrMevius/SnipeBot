@@ -711,6 +711,24 @@ def check_source(
                 )
             )
 
+    if baseline:
+        # A new baseline follows a change of the filters: listings that are
+        # still on the platform but no longer match leave the search.
+        matched = {listing.item_id for listing in matching}
+        _delete_listing_rows(
+            db_session,
+            [
+                row
+                for row in db_session.scalars(
+                    select(MarketplaceListing).where(
+                        MarketplaceListing.search_id == search.id,
+                        MarketplaceListing.marketplace == source.marketplace,
+                        MarketplaceListing.item_id.in_(page_ids - matched),
+                    )
+                ).all()
+            ],
+        )
+
     archive = settings.marketplace_archive_enabled and source.marketplace in ARCHIVE_MARKETPLACES
     if policy == "exclude":
         matching = [listing for listing in matching if not unknown_by_id.get(listing.item_id)]
