@@ -125,12 +125,12 @@ describe("App", () => {
     expect(screen.getByTestId("shop-card-amazon_nl")).toBeTruthy();
     expect(screen.getByTestId("shop-card-aliexpress")).toBeTruthy();
     expect(screen.getByTestId("shop-card-lidl_nl")).toBeTruthy();
-    expect(screen.getByTestId("car-site-card-autoscout24").textContent).toContain(
-      "Nederland, België en Duitsland",
-    );
+    expect(screen.getByTestId("car-site-card-autoscout24").textContent).toContain("NL, BE, DE");
+    expect(screen.getByTestId("car-site-card-autoscout24").textContent).toContain("Live");
+    expect(screen.getByTestId("car-site-card-mobile_de").textContent).toContain("Gepland");
     expect(screen.getByTestId("car-site-card-marktplaats")).toBeTruthy();
     expect(screen.getByTestId("car-site-card-autotrack")).toBeTruthy();
-    expect(screen.getByText("Open het product op hema.nl en kopieer de volledige product-URL.")).toBeTruthy();
+    expect(screen.getByText("Volledige product-URL; target optioneel.")).toBeTruthy();
   });
 
   it("shows status context, relative check time and density toggle", async () => {

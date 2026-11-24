@@ -891,48 +891,14 @@ td {
   margin-bottom: 4px;
 }
 
-.supported-shops-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 10px;
-}
-
-.supported-shop-card {
-  border: 1px solid var(--panel-border);
-  border-radius: 12px;
-  padding: 12px;
-  background: var(--input-bg);
-}
-
-.supported-shop-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-}
-
 .supported-shop-key {
   color: var(--muted);
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.supported-shop-card ol,
-.supported-shop-card ul {
-  margin: 10px 0 0;
-  padding-left: 18px;
-  display: grid;
-  gap: 6px;
-}
-
 .supported-shops-panel h3 {
   margin: 16px 0 4px;
-}
-
-.supported-shop-card li {
-  font-size: 13px;
-  line-height: 1.45;
 }
 
 @media (max-width: 980px) {
@@ -961,9 +927,6 @@ td {
     flex-wrap: wrap;
   }
 
-  .supported-shops-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @keyframes chart-fade-in {
@@ -1287,4 +1250,12 @@ button.archive-thumb.active {
 .archive-duplicates ul {
   margin: 4px 0 0;
   padding-left: 18px;
+}
+
+.supported-sites-table td {
+  vertical-align: top;
+}
+
+.supported-sites-table td:last-child {
+  min-width: 260px;
 }
