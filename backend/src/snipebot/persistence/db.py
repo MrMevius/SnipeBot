@@ -137,6 +137,13 @@ def _ensure_legacy_columns() -> None:
                     "ALTER TABLE marketplace_searches ADD COLUMN alert_max_price NUMERIC(12, 2)"
                 )
             )
+        if "unknown_policy" not in search_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE marketplace_searches ADD COLUMN unknown_policy VARCHAR(16) "
+                    "NOT NULL DEFAULT 'include'"
+                )
+            )
         if "filters_json" not in search_columns:
             connection.execute(
                 text("ALTER TABLE marketplace_searches ADD COLUMN filters_json TEXT")

@@ -518,6 +518,8 @@ export async function fetchWatchlistHealth(): Promise<WatchlistHealthResponse> {
 
 export type SellerType = "all" | "private" | "business";
 
+export type UnknownPolicy = "include" | "quiet" | "exclude";
+
 export type MarketplaceListingSample = {
   item_id: string;
   title: string;
@@ -583,6 +585,7 @@ export type MarketplaceSearch = {
   exclude_keywords: string[];
   seller_type: SellerType;
   alert_max_price: number | null;
+  unknown_policy: UnknownPolicy;
   active: boolean;
   baseline_done: boolean;
   last_checked_at: string | null;
@@ -613,6 +616,7 @@ export type MarketplaceSearchPreviewPayload = {
 export type MarketplaceSearchCreatePayload = MarketplaceSearchPreviewPayload & {
   name: string;
   alert_max_price: number | null;
+  unknown_policy: UnknownPolicy;
 };
 
 export type MarketplaceSearchUpdatePayload = {
@@ -623,6 +627,7 @@ export type MarketplaceSearchUpdatePayload = {
   alert_max_price?: number | null;
   filters?: SearchFilters;
   platforms?: string[];
+  unknown_policy?: UnknownPolicy;
 };
 
 export type MarketplaceListing = {

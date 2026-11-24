@@ -433,6 +433,7 @@ def test_api_preview_create_list_and_listings() -> None:
         assert search["seller_type"] == "private"
         assert search["baseline_done"] is False
         assert search["filters"]["make"] == "Volkswagen"
+        assert search["unknown_policy"] == "include"
         assert [item["marketplace"] for item in search["platforms"]] == ["marktplaats"]
 
         query = json.loads(_source().query_json)
@@ -487,6 +488,9 @@ def test_api_patch_filters_rebaselines_and_delete() -> None:
         assert client.patch(f"/searches/{search_id}", json={"alert_max_price": 0}).status_code == 422
         cleared = client.patch(f"/searches/{search_id}", json={"alert_max_price": None}).json()
         assert cleared["alert_max_price"] is None
+        quiet = client.patch(f"/searches/{search_id}", json={"unknown_policy": "quiet"}).json()
+        assert (quiet["unknown_policy"], quiet["baseline_done"]) == ("quiet", True)
+        assert client.patch(f"/searches/{search_id}", json={"unknown_policy": "maybe"}).status_code == 422
 
         same = client.patch(
             f"/searches/{search_id}", json={"filters": GOLF_FILTERS, "platforms": ["marktplaats"]}

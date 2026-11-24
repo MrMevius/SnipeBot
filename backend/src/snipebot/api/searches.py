@@ -48,6 +48,7 @@ from snipebot.persistence.models import MarketplaceListing, MarketplaceSearch
 router = APIRouter(prefix="/searches", tags=["searches"])
 
 SellerType = Literal["all", "private", "business"]
+UnknownPolicy = Literal["include", "quiet", "exclude"]
 FilterValue = Annotated[int | None, Field(default=None, ge=0, le=100_000_000)]
 
 
@@ -129,6 +130,7 @@ class SearchCreateRequest(BaseModel):
     exclude_keywords: list[str] = Field(default_factory=list, max_length=50)
     seller_type: SellerType = "all"
     alert_max_price: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
+    unknown_policy: UnknownPolicy = "include"
 
 
 class SearchUpdateRequest(BaseModel):
@@ -140,6 +142,7 @@ class SearchUpdateRequest(BaseModel):
     alert_max_price: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
     filters: FiltersModel | None = None
     platforms: list[str] | None = Field(default=None, min_length=1, max_length=10)
+    unknown_policy: UnknownPolicy | None = None
 
 
 class CheapestListingResponse(BaseModel):
@@ -172,6 +175,7 @@ class SearchResponse(BaseModel):
     exclude_keywords: list[str]
     seller_type: str
     alert_max_price: float | None
+    unknown_policy: str
     active: bool
     baseline_done: bool
     last_checked_at: datetime | None
@@ -280,6 +284,7 @@ def _to_response(db_session: Session, search: MarketplaceSearch) -> SearchRespon
         alert_max_price=float(search.alert_max_price)
         if search.alert_max_price is not None
         else None,
+        unknown_policy=search.unknown_policy,
         active=search.active,
         baseline_done=status.baseline_done,
         last_checked_at=status.last_checked_at,
@@ -436,6 +441,7 @@ def post_search(
             exclude_keywords=payload.exclude_keywords,
             seller_type=payload.seller_type,
             alert_max_price=payload.alert_max_price,
+            unknown_policy=payload.unknown_policy,
         )
     except MarketplaceError as exc:
         _raise_for_marketplace(exc)
@@ -475,6 +481,7 @@ def patch_search(
             active=payload.active,
             filters=payload.filters.to_filters() if payload.filters is not None else None,
             platforms=payload.platforms,
+            unknown_policy=payload.unknown_policy,
             **(
                 {"alert_max_price": payload.alert_max_price}
                 if "alert_max_price" in payload.model_fields_set
