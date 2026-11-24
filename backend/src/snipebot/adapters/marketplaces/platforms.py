@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from snipebot.adapters.marketplaces.base import PlatformAdapter
-from snipebot.adapters.marketplaces.marktplaats import MarktplaatsAdapter
+from snipebot.adapters.marketplaces.marktplaats import TWEEDEHANDS, MarktplaatsAdapter
 from snipebot.adapters.marketplaces.scout24 import AUTOSCOUT24, AUTOTRACK, Scout24Adapter
 
 # Display order in the UI and in merged make/model lists.
 PLATFORM_LABELS = {
     "marktplaats": "Marktplaats",
+    "2dehands": "2dehands",
     "autoscout24": "AutoScout24",
     "autotrack": "AutoTrack",
 }
@@ -27,6 +28,7 @@ def get_adapters() -> dict[str, PlatformAdapter]:
     if _adapters is None:
         _adapters = {
             "marktplaats": MarktplaatsAdapter(),
+            "2dehands": MarktplaatsAdapter(site=TWEEDEHANDS),
             "autoscout24": Scout24Adapter(AUTOSCOUT24),
             "autotrack": Scout24Adapter(AUTOTRACK),
         }

@@ -128,6 +128,7 @@ describe("App", () => {
     expect(screen.getByTestId("car-site-card-autoscout24").textContent).toContain("NL, BE, DE");
     expect(screen.getByTestId("car-site-card-autoscout24").textContent).toContain("Live");
     expect(screen.getByTestId("car-site-card-mobile_de").textContent).toContain("Gepland");
+    expect(screen.getByTestId("car-site-card-2dehands").textContent).toContain("Live");
     expect(screen.getByTestId("car-site-card-marktplaats")).toBeTruthy();
     expect(screen.getByTestId("car-site-card-autotrack")).toBeTruthy();
     expect(screen.getByText("Volledige product-URL; target optioneel.")).toBeTruthy();

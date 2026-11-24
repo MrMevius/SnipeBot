@@ -525,7 +525,10 @@ def run_due_marketplace_searches(
                     MarketplaceSearchSource.next_check_at <= now,
                 ),
             )
-            .order_by(MarketplaceSearchSource.next_check_at.asc().nullsfirst())
+            .order_by(
+                MarketplaceSearchSource.next_check_at.asc().nullsfirst(),
+                MarketplaceSearchSource.id.asc(),
+            )
             .limit(DUE_BATCH_SIZE)
         ).all()
     )
@@ -632,10 +635,16 @@ def check_source(
     }
 
     policy = search.unknown_policy
+    elsewhere: set[str] = set()
     intents: list[_AlertIntent] = []
     for listing in matching:
         unknown = unknown_by_id.get(listing.item_id, [])
         row = known.get(listing.item_id)
+        if row is not None and row.marketplace != source.marketplace:
+            # Shown on several platforms under one id (e.g. a Marktplaats ad also
+            # on 2dehands): recorded once, by the platform that found it first.
+            elsewhere.add(listing.item_id)
+            continue
         if unknown and policy == "exclude":
             if row is not None:
                 _delete_listing_rows(db_session, [row])
@@ -685,6 +694,7 @@ def check_source(
     archive = settings.marketplace_archive_enabled and source.marketplace in ARCHIVE_MARKETPLACES
     if policy == "exclude":
         matching = [listing for listing in matching if not unknown_by_id.get(listing.item_id)]
+    matching = [listing for listing in matching if listing.item_id not in elsewhere]
     if archive:
         observe_listings(db_session, search, matching, now)
 

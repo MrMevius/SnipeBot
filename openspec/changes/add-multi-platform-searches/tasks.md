@@ -20,4 +20,9 @@
 - [x] 3.2 Same listing ids: switching AutoTrack → AutoScout24 moves search listings and archive items instead of recording them again.
 - [x] 3.3 Production: replace AutoTrack by AutoScout24 in both searches.
 - [x] 3.4 Per-search policy for listings without a post-filtered value: keep and alert, keep quietly, leave out (+ Alembic `20261125_0010`).
-- [ ] 3.5 Production: SR keeps unknown battery quietly, LR leaves out unknown range.
+- [x] 3.5 Production: SR keeps unknown battery quietly, LR leaves out unknown range.
+
+## 4. 2dehands (PR D)
+
+- [x] 4.1 `MarktplaatsSite` for Marktplaats and 2dehands (search API, listing pages, seller links, image host); range and battery as post-filters on 2dehands.
+- [x] 4.2 An ad on several platforms under one id is recorded once.
