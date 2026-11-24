@@ -59,16 +59,39 @@ function statusLabel(search: MarketplaceSearch): string {
   return `Error: ${search.last_status}`;
 }
 
+function numericAttribute(listing: MarketplaceListing, key: string): number | null {
+  const value = Number(listing.attributes[key]);
+  return listing.attributes[key] && Number.isFinite(value) ? value : null;
+}
+
 function carDetails(attributes: Record<string, string>): string {
-  const parts: string[] = [];
-  if (attributes.constructionYear) parts.push(attributes.constructionYear);
-  const mileage = Number(attributes.mileage);
-  if (attributes.mileage && Number.isFinite(mileage)) {
-    parts.push(`${mileage.toLocaleString("nl-NL")} km`);
-  }
-  if (attributes.fuel) parts.push(attributes.fuel);
-  if (attributes.transmission) parts.push(attributes.transmission);
-  return parts.join(" · ");
+  return [attributes.fuel, attributes.transmission].filter(Boolean).join(" · ");
+}
+
+type ListingSortColumn = "title" | "price" | "year" | "mileage" | "distance" | "first_seen";
+type ListingSort = { column: ListingSortColumn; direction: "asc" | "desc" };
+
+const LISTING_SORT_VALUE: Record<ListingSortColumn, (listing: MarketplaceListing) => string | number | null> = {
+  title: (listing) => listing.title.toLowerCase(),
+  price: (listing) => listing.current_price,
+  year: (listing) => numericAttribute(listing, "constructionYear"),
+  mileage: (listing) => numericAttribute(listing, "mileage"),
+  distance: (listing) => listing.distance_km,
+  first_seen: (listing) => listing.first_seen_at,
+};
+
+// Listings without a value (e.g. price on request) stay at the bottom in both directions.
+function sortListings(listings: MarketplaceListing[], sort: ListingSort): MarketplaceListing[] {
+  const valueOf = LISTING_SORT_VALUE[sort.column];
+  const factor = sort.direction === "asc" ? 1 : -1;
+  return [...listings].sort((left, right) => {
+    const a = valueOf(left);
+    const b = valueOf(right);
+    if (a === null || b === null) {
+      return a === b ? 0 : a === null ? 1 : -1;
+    }
+    return (a < b ? -1 : a > b ? 1 : 0) * factor;
+  });
 }
 
 function SellerSelect({
@@ -414,6 +437,7 @@ function SearchDetail({
   const [keywords, setKeywords] = useState("");
   const [sellerType, setSellerType] = useState<SellerType>("all");
   const [showGone, setShowGone] = useState(false);
+  const [listingSort, setListingSort] = useState<ListingSort>({ column: "first_seen", direction: "desc" });
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -456,7 +480,34 @@ function SearchDetail({
     }
   }
 
-  const visible = listings.filter((listing) => showGone || listing.gone_at === null);
+  const visible = sortListings(
+    listings.filter((listing) => showGone || listing.gone_at === null),
+    listingSort,
+  );
+  const hasYear = listings.some((listing) => numericAttribute(listing, "constructionYear") !== null);
+  const hasMileage = listings.some((listing) => numericAttribute(listing, "mileage") !== null);
+  const hasDetails = listings.some((listing) => carDetails(listing.attributes) !== "");
+
+  function sortHeader(column: ListingSortColumn, label: string) {
+    const active = listingSort.column === column;
+    return (
+      <th aria-sort={active ? (listingSort.direction === "asc" ? "ascending" : "descending") : undefined}>
+        <button
+          type="button"
+          className="sort-button"
+          onClick={() =>
+            setListingSort({
+              column,
+              direction: active && listingSort.direction === "asc" ? "desc" : "asc",
+            })
+          }
+        >
+          {label}{" "}
+          <span className="sort-indicator">{active ? (listingSort.direction === "asc" ? "↑" : "↓") : "↕"}</span>
+        </button>
+      </th>
+    );
+  }
   const goneCount = listings.length - listings.filter((listing) => listing.gone_at === null).length;
 
   return (
@@ -542,11 +593,13 @@ function SearchDetail({
             <table className="compact-table">
               <thead>
                 <tr>
-                  <th>Listing</th>
-                  <th>Price</th>
-                  <th>Details</th>
-                  <th>Location</th>
-                  <th>First seen</th>
+                  {sortHeader("title", "Listing")}
+                  {sortHeader("price", "Price")}
+                  {hasYear && sortHeader("year", "Year")}
+                  {hasMileage && sortHeader("mileage", "Mileage")}
+                  {hasDetails && <th>Details</th>}
+                  {sortHeader("distance", "Location")}
+                  {sortHeader("first_seen", "First seen")}
                 </tr>
               </thead>
               <tbody>
@@ -573,7 +626,14 @@ function SearchDetail({
                     <td>
                       <ListingPrice listing={listing} />
                     </td>
-                    <td>{carDetails(listing.attributes) || "–"}</td>
+                    {hasYear && <td>{numericAttribute(listing, "constructionYear") ?? "–"}</td>}
+                    {hasMileage && (
+                      <td>
+                        {numericAttribute(listing, "mileage")?.toLocaleString("nl-NL") ?? "–"}
+                        {numericAttribute(listing, "mileage") !== null ? " km" : ""}
+                      </td>
+                    )}
+                    {hasDetails && <td>{carDetails(listing.attributes) || "–"}</td>}
                     <td>
                       {listing.city ?? "–"}
                       {listing.distance_km !== null ? ` (${listing.distance_km} km)` : ""}
