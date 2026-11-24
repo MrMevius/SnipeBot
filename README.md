@@ -11,7 +11,7 @@ SnipeBot is a self-hosted price-tracking application with a Docker-first runtime
 
 ## Car searches (Marktplaats and more)
 
-Besides product pages, SnipeBot can watch car searches on several platforms at once (currently Marktplaats.nl):
+Besides product pages, SnipeBot can watch car searches on several platforms at once (Marktplaats.nl and AutoTrack.nl):
 
 1. Open **Searches**, choose a make and model (the lists come from the platforms; a platform that lacks the model is greyed out), tick the platforms and set the filters you need: year, price, mileage, minimum range and battery capacity.
 2. Optionally add exclude words and a seller filter, click **Preview** and compare the count per platform with the websites, then **Save search**.
@@ -22,17 +22,23 @@ A filter a platform cannot apply itself is checked by SnipeBot against the listi
 
 Each platform is an adapter (`backend/src/snipebot/adapters/marketplaces/`) implementing `PlatformAdapter`: it lists makes and models, turns the filters into a platform query (reporting the filters it cannot apply) and runs that query.
 
+Platform notes:
+
+- **Marktplaats** filters on every SnipeBot filter itself; a check reads the newest 100 listings.
+- **AutoTrack** lists dealer cars only (a "private only" search cannot include it) and cannot filter on range or battery capacity, so SnipeBot checks those itself: range comes from the listing data, battery capacity only from the title (e.g. "78 kWh"), so it is often unknown. A check reads all result pages newest first (20 per page, at most 20 pages, 3 s apart). AutoTrack's robots.txt disallows crawlers on search pages; SnipeBot uses it for personal searches at the regular cadence and backs off when blocked. AutoTrack is moving pages to a newer site without the page data SnipeBot reads; when that reaches search pages, the search shows a parse error instead of wrong results.
+
 Searches created earlier from a pasted Marktplaats URL keep working; choose a make and model on the search page to switch them to filters and add platforms.
 
 Telegram uses the same notification settings as the watchlist (Settings → Telegram).
 
 ### Listing archive
 
-Every listing a saved search records is also archived locally, so it stays available when Marktplaats removes or changes it:
+Every listing a saved search records is also archived locally, so it stays available when the platform removes or changes it:
 
-- The worker fetches each listing page and stores title, price, description, all attributes, seller details, statistics and **all photos** as originally uploaded (no resizing, ~150–300 KB each). Fetching is throttled (one listing per ~3 s, at most ~45 s per worker tick) and pauses with increasing backoff when Marktplaats blocks requests.
+- The worker fetches each listing page and stores title, price, description, all attributes, seller details, statistics and **all photos** as originally uploaded (no resizing, ~150–300 KB each). Fetching is throttled (one listing per ~3 s, at most ~45 s per worker tick) and pauses that platform with increasing backoff when it blocks requests. AutoTrack photos are stored as the uploaded JPEG (typically 1920×1280, ~200 KB).
 - A listing is fetched again when its price or title changes in the search results and otherwise weekly while it is online. A new version is stored only when the content changed; photos are only added, a photo removed from the listing is kept and marked as removed.
 - Listings in a search link to SnipeBot's own listing page (`/archive/<id>`) with gallery, description, attributes, seller, price history and version history (including description diffs). **Archive** in the menu lists all archived listings across searches (search, filter, sort) and shows the storage used.
+- The same car on several platforms is recognized by its license plate (AutoTrack always shows it, Marktplaats sometimes in the car attributes); its archive page then links to the other listings ("also listed").
 - The archive is kept when a search is deleted; delete single listings from their archive page. Photos are stored under `SNIPEBOT_MARKETPLACE_ARCHIVE_DIR` (default `/data/archive`, inside the SQLite volume) and served through the API. There is no size limit: plan roughly 5–8 MB per car listing (about 25 photos).
 
 ## Prerequisites

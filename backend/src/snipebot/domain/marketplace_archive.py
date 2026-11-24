@@ -10,8 +10,9 @@ when the content (title, price, description, attributes, seller, photos)
 actually changed. Photos are only added, never deleted: a photo that disappears
 from the listing is marked as removed.
 
-Fetching is throttled (one listing per few seconds, a time budget per worker
-tick) and backs off globally when Marktplaats blocks requests.
+Each platform has an ``ArchiveSource`` that fetches its listing pages and
+photos. Fetching is throttled (one listing per few seconds, a time budget per
+worker tick) and backs off per platform when that platform blocks requests.
 """
 
 from __future__ import annotations
@@ -34,7 +35,10 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from snipebot.adapters.marketplaces.marktplaats import Fetcher, Listing, MarktplaatsError
+from snipebot.adapters.marketplaces import autotrack_listing
+from snipebot.adapters.marketplaces.autotrack import normalize_plate
+from snipebot.adapters.marketplaces.base import Listing, MarketplaceError
+from snipebot.adapters.marketplaces.marktplaats import Fetcher
 from snipebot.adapters.marketplaces.marktplaats_listing import (
     ImageFetcher,
     ListingDetail,
@@ -54,26 +58,58 @@ from snipebot.persistence.models import (
 
 logger = logging.getLogger(__name__)
 
-MARKETPLACE = "marktplaats"
+# Platforms whose listings are archived.
+ARCHIVE_MARKETPLACES = ("marktplaats", "autotrack")
 DUE_BATCH_SIZE = 50
 MAX_FETCH_FAILURES = 5
 IMAGE_DELAY_SECONDS = 0.2
 INCOMPLETE_RETRY = timedelta(hours=1)
 SORT_COLUMNS = ("first_seen", "last_seen", "price", "title")
 
-_ITEM_ID = re.compile(r"^[a-z]\d+$")
-_block_state: dict[str, Any] = {"until": None, "count": 0}
+# Path segments: Marktplaats ids ("m123"), AutoTrack UUIDs, platform keys.
+_SAFE_SEGMENT = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+# Per platform: blocked until, consecutive blocks.
+_block_state: dict[str, dict[str, Any]] = {}
+
+
+@dataclass(slots=True)
+class ArchiveSource:
+    """Fetches listing pages and photos of one platform."""
+
+    fetch_detail: Callable[[str], ListingDetail]
+    fetch_image: ImageFetcher
+
+
+def build_sources(
+    settings: Settings,
+    *,
+    fetch: Fetcher | None = None,
+    image_fetcher: ImageFetcher | None = None,
+) -> dict[str, ArchiveSource]:
+    """Archive sources per platform; ``fetch``/``image_fetcher`` replace Marktplaats I/O."""
+    return {
+        "marktplaats": ArchiveSource(
+            fetch_detail=lambda url: fetch_listing(
+                url, fetch=fetch, image_size=settings.marketplace_archive_image_size
+            ),
+            fetch_image=image_fetcher or image_fetch,
+        ),
+        "autotrack": ArchiveSource(
+            fetch_detail=autotrack_listing.fetch_listing,
+            fetch_image=autotrack_listing.image_fetch,
+        ),
+    }
 
 
 class ArchiveStore:
-    """Photo files under ``<root>/marktplaats/<item id>/<sha256>.jpg``."""
+    """Photo files under ``<root>/<platform>/<item id>/<sha256>.jpg``."""
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
 
-    def save(self, item_id: str, data: bytes) -> tuple[str, str, int]:
+    def save(self, marketplace: str, item_id: str, data: bytes) -> tuple[str, str, int]:
         sha = hashlib.sha256(data).hexdigest()
-        relative = f"{MARKETPLACE}/{_safe_item_id(item_id)}/{sha}.jpg"
+        relative = f"{_safe_segment(marketplace)}/{_safe_segment(item_id)}/{sha}.jpg"
         path = self.root / relative
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,8 +125,10 @@ class ArchiveStore:
             raise ValueError("Path outside the archive")
         return path
 
-    def delete_item(self, item_id: str) -> None:
-        shutil.rmtree(self.root / MARKETPLACE / _safe_item_id(item_id), ignore_errors=True)
+    def delete_item(self, marketplace: str, item_id: str) -> None:
+        shutil.rmtree(
+            self.root / _safe_segment(marketplace) / _safe_segment(item_id), ignore_errors=True
+        )
 
 
 @dataclass(slots=True)
@@ -113,11 +151,15 @@ def observe_listings(
     """Create archive items for new listings and schedule re-fetches on changes."""
     if not listings:
         return
-    items = _items_by_item_id(db_session, [listing.item_id for listing in listings])
+    items = _items_by_key(db_session, [(listing.marketplace, listing.item_id) for listing in listings])
     for listing in listings:
-        item = items.get(listing.item_id)
+        key = (listing.marketplace, listing.item_id)
+        item = items.get(key)
         if item is None:
-            item = _new_item(search.owner_id, listing.item_id, listing.url, listing.title, now)
+            item = _new_item(
+                search.owner_id, listing.marketplace, listing.item_id, listing.url, listing.title, now
+            )
+            item.license_plate = listing.license_plate
             item.price = listing.price
             item.price_type = listing.price_type
             item.thumbnail_url = listing.image_url
@@ -126,10 +168,11 @@ def observe_listings(
             if listing.price is not None:
                 item.prices.append(MarketplaceItemPrice(price=listing.price, observed_at=now))
             db_session.add(item)
-            items[listing.item_id] = item
+            items[key] = item
             continue
 
         item.last_seen_at = now
+        item.license_plate = item.license_plate or listing.license_plate
         item.thumbnail_url = listing.image_url or item.thumbnail_url
         item.summary_attributes_json = json.dumps(listing.attributes, ensure_ascii=False)
         refetch = False
@@ -150,33 +193,43 @@ def observe_listings(
             item.next_fetch_at = now
 
 
-def mark_listings_missing(db_session: Session, item_ids: list[str], now: datetime) -> None:
+def mark_listings_missing(
+    db_session: Session, marketplace: str, item_ids: list[str], now: datetime
+) -> None:
     """A search no longer shows these listings: check whether they still exist."""
     if not item_ids:
         return
-    for item in _items_by_item_id(db_session, item_ids).values():
+    for item in _items_by_key(db_session, [(marketplace, item_id) for item_id in item_ids]).values():
         if item.gone_at is None and (item.next_fetch_at is None or _aware(item.next_fetch_at) > now):
             item.next_fetch_at = now
 
 
 def backfill_items(db_session: Session) -> int:
     """Create archive items for recorded search listings that have none yet."""
-    archived = select(MarketplaceItem.item_id).where(MarketplaceItem.marketplace == MARKETPLACE)
+    _backfill_license_plates(db_session)
+    archived = (
+        select(MarketplaceItem.id)
+        .where(
+            MarketplaceItem.marketplace == MarketplaceListing.marketplace,
+            MarketplaceItem.item_id == MarketplaceListing.item_id,
+        )
+        .exists()
+    )
     rows = db_session.execute(
         select(MarketplaceListing, MarketplaceSearch.owner_id)
         .join(MarketplaceSearch, MarketplaceSearch.id == MarketplaceListing.search_id)
-        .where(
-            MarketplaceListing.marketplace == MARKETPLACE,
-            MarketplaceListing.item_id.not_in(archived),
-        )
+        .where(MarketplaceListing.marketplace.in_(ARCHIVE_MARKETPLACES), ~archived)
         .order_by(MarketplaceListing.first_seen_at.asc())
     ).all()
-    created: dict[str, MarketplaceItem] = {}
+    created: dict[tuple[str, str], MarketplaceItem] = {}
     now = datetime.now(UTC)
     for listing, owner_id in rows:
-        if listing.item_id in created:
+        key = (listing.marketplace, listing.item_id)
+        if key in created:
             continue
-        item = _new_item(owner_id, listing.item_id, listing.url, listing.title, now)
+        item = _new_item(
+            owner_id, listing.marketplace, listing.item_id, listing.url, listing.title, now
+        )
         item.first_seen_at = listing.first_seen_at
         item.last_seen_at = listing.last_seen_at
         item.price = listing.current_price
@@ -189,7 +242,7 @@ def backfill_items(db_session: Session) -> int:
                 MarketplaceItemPrice(price=point.price, observed_at=point.observed_at)
             )
         db_session.add(item)
-        created[listing.item_id] = item
+        created[key] = item
     if created:
         db_session.commit()
         logger.info("marketplace_archive.backfill created=%s", len(created))
@@ -205,6 +258,7 @@ def run_due_archive_fetches(
     *,
     fetch: Fetcher | None = None,
     image_fetcher: ImageFetcher | None = None,
+    sources: dict[str, ArchiveSource] | None = None,
     store: ArchiveStore | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
@@ -214,15 +268,16 @@ def run_due_archive_fetches(
     backfill_items(db_session)
 
     now = datetime.now(UTC)
-    blocked_until = _block_state["until"]
-    if blocked_until is not None and now < blocked_until:
+    sources = sources or build_sources(settings, fetch=fetch, image_fetcher=image_fetcher)
+    available = [key for key in sources if not _is_blocked(key, now)]
+    if not available:
         return 0
 
     items = list(
         db_session.scalars(
             select(MarketplaceItem)
             .where(
-                MarketplaceItem.marketplace == MARKETPLACE,
+                MarketplaceItem.marketplace.in_(available),
                 MarketplaceItem.next_fetch_at.is_not(None),
                 MarketplaceItem.next_fetch_at <= now,
             )
@@ -231,10 +286,12 @@ def run_due_archive_fetches(
         ).all()
     )
     store = store or build_store(settings)
-    image_fetcher = image_fetcher or image_fetch
     started = clock()
     processed = 0
     for item in items:
+        marketplace = item.marketplace
+        if _is_blocked(marketplace, datetime.now(UTC)):
+            continue
         if processed and clock() - started >= settings.marketplace_archive_tick_budget_seconds:
             break
         if processed:
@@ -246,19 +303,18 @@ def run_due_archive_fetches(
                 db_session,
                 item,
                 settings,
-                fetch=fetch,
-                image_fetcher=image_fetcher,
+                source=sources[marketplace],
                 store=store,
                 sleep=sleep,
             )
             db_session.commit()
-            _block_state.update(until=None, count=0)
+            _block_state.pop(marketplace, None)
         except Exception as exc:
-            if isinstance(exc, MarktplaatsError) and exc.kind == "blocked":
+            if isinstance(exc, MarketplaceError) and exc.kind == "blocked":
                 # Keep the photos stored so far; the listing stays due.
                 db_session.commit()
-                _record_block(str(exc), settings)
-                break
+                _record_block(marketplace, str(exc), settings)
+                continue
             db_session.rollback()
             metrics.inc("marketplace.archive_unhandled_error")
             logger.exception(
@@ -276,20 +332,17 @@ def archive_item(
     item: MarketplaceItem,
     settings: Settings,
     *,
-    fetch: Fetcher | None = None,
-    image_fetcher: ImageFetcher = image_fetch,
+    source: ArchiveSource,
     store: ArchiveStore,
     sleep: Callable[[float], None] = time.sleep,
 ) -> str:
-    """Fetch and store one listing. Raises ``MarktplaatsError`` when blocked."""
+    """Fetch and store one listing. Raises ``MarketplaceError`` when blocked."""
     now = datetime.now(UTC)
     try:
-        detail = fetch_listing(
-            item.url, fetch=fetch, image_size=settings.marketplace_archive_image_size
-        )
+        detail = source.fetch_detail(item.url)
         if detail.item_id != item.item_id:
-            raise MarktplaatsError("parse_error", "Listing page shows another listing")
-    except MarktplaatsError as exc:
+            raise MarketplaceError("parse_error", "Listing page shows another listing")
+    except MarketplaceError as exc:
         if exc.kind in {"gone", "invalid_url"}:
             item.status = "gone"
             item.gone_at = item.gone_at or now
@@ -303,7 +356,7 @@ def archive_item(
         _record_fetch_failure(item, str(exc), now, settings)
         return "failed"
 
-    missing = _sync_images(item, detail, image_fetcher, store, sleep, now)
+    missing = _sync_images(item, detail, source.fetch_image, store, sleep, now)
     _apply_detail(db_session, item, detail, now)
     item.next_fetch_at = now + (
         INCOMPLETE_RETRY
@@ -341,7 +394,7 @@ def _sync_images(
             continue
         try:
             data = image_fetcher(image.url)
-        except MarktplaatsError as exc:
+        except MarketplaceError as exc:
             if exc.kind == "blocked":
                 raise
             missing += 1
@@ -349,7 +402,7 @@ def _sync_images(
                 "marketplace_archive.image_failed item_id=%s reason=%s", item.item_id, exc
             )
             continue
-        relative, sha, size = store.save(item.item_id, data)
+        relative, sha, size = store.save(item.marketplace, item.item_id, data)
         row = MarketplaceItemImage(
             source_key=image.key[:255],
             source_url=image.url,
@@ -387,6 +440,11 @@ def _apply_detail(
     item.stats_json = json.dumps(detail.stats, ensure_ascii=False)
     item.highlights_json = json.dumps(detail.highlights, ensure_ascii=False)
     item.is_reserved = detail.is_reserved
+    item.license_plate = (
+        detail.extra.get("license_plate")
+        or plate_from_attributes(detail.attribute_groups)
+        or item.license_plate
+    )
     item.status = "archived"
     item.archived_at = now
     item.gone_at = None
@@ -426,21 +484,28 @@ def _record_fetch_failure(
     )
 
 
-def _record_block(message: str, settings: Settings) -> None:
-    _block_state["count"] += 1
-    seconds = _backoff_seconds(_block_state["count"], settings)
-    _block_state["until"] = datetime.now(UTC) + timedelta(seconds=seconds)
+def _is_blocked(marketplace: str, now: datetime) -> bool:
+    until = _block_state.get(marketplace, {}).get("until")
+    return until is not None and now < until
+
+
+def _record_block(marketplace: str, message: str, settings: Settings) -> None:
+    state = _block_state.setdefault(marketplace, {"until": None, "count": 0})
+    state["count"] += 1
+    seconds = _backoff_seconds(state["count"], settings)
+    state["until"] = datetime.now(UTC) + timedelta(seconds=seconds)
     metrics.inc("marketplace.archive_blocked")
     logger.warning(
-        "marketplace_archive.blocked pause_seconds=%s blocks=%s reason=%s",
+        "marketplace_archive.blocked platform=%s pause_seconds=%s blocks=%s reason=%s",
+        marketplace,
         seconds,
-        _block_state["count"],
+        state["count"],
         message,
     )
 
 
 def reset_block_state() -> None:
-    _block_state.update(until=None, count=0)
+    _block_state.clear()
 
 
 def _backoff_seconds(attempt: int, settings: Settings) -> int:
@@ -460,6 +525,7 @@ def list_archive_items(
     q: str | None = None,
     search_id: int | None = None,
     status: str | None = None,
+    marketplace: str | None = None,
     sort: str = "first_seen",
     order: str = "desc",
     limit: int = 50,
@@ -485,6 +551,8 @@ def list_archive_items(
                 )
             )
         )
+    if marketplace is not None:
+        conditions.append(MarketplaceItem.marketplace == marketplace)
     if status == "online":
         conditions.append(MarketplaceItem.gone_at.is_(None))
     elif status == "gone":
@@ -531,7 +599,6 @@ def archive_ids_for(db_session: Session, *, owner_id: str, item_ids: list[str]) 
     rows = db_session.execute(
         select(MarketplaceItem.item_id, MarketplaceItem.id).where(
             MarketplaceItem.owner_id == owner_id,
-            MarketplaceItem.marketplace == MARKETPLACE,
             MarketplaceItem.item_id.in_(item_ids),
         )
     ).all()
@@ -556,6 +623,31 @@ def item_searches(
     for row in rows:
         result.setdefault(row.item_id, []).append((row.id, row.name))
     return result
+
+
+def duplicate_items(db_session: Session, item: MarketplaceItem) -> list[MarketplaceItem]:
+    """Other archived listings of the same car (same license plate), e.g. on another platform."""
+    if not item.license_plate:
+        return []
+    return list(
+        db_session.scalars(
+            select(MarketplaceItem)
+            .where(
+                MarketplaceItem.owner_id == item.owner_id,
+                MarketplaceItem.license_plate == item.license_plate,
+                MarketplaceItem.id != item.id,
+            )
+            .order_by(MarketplaceItem.gone_at.is_not(None), MarketplaceItem.first_seen_at.desc())
+        ).all()
+    )
+
+
+def plate_from_attributes(groups: list[dict[str, Any]]) -> str | None:
+    for group in groups:
+        for attribute in group.get("items") or []:
+            if attribute.get("key") == "licensePlate":
+                return normalize_plate(attribute.get("value"))
+    return None
 
 
 def cover_images(db_session: Session, archive_ids: list[int]) -> dict[int, int]:
@@ -596,10 +688,10 @@ def archive_usage(db_session: Session, *, owner_id: str) -> ArchiveUsage:
 
 
 def delete_archive_item(db_session: Session, item: MarketplaceItem, store: ArchiveStore) -> None:
-    item_id = item.item_id
+    marketplace, item_id = item.marketplace, item.item_id
     db_session.delete(item)
     db_session.commit()
-    store.delete_item(item_id)
+    store.delete_item(marketplace, item_id)
     logger.info("marketplace_archive.deleted item_id=%s", item_id)
 
 
@@ -688,24 +780,38 @@ def _display(value: Any) -> str | None:
     return str(value)
 
 
-def _items_by_item_id(db_session: Session, item_ids: list[str]) -> dict[str, MarketplaceItem]:
+def _items_by_key(
+    db_session: Session, keys: list[tuple[str, str]]
+) -> dict[tuple[str, str], MarketplaceItem]:
+    wanted = set(keys)
+    items = db_session.scalars(
+        select(MarketplaceItem).where(MarketplaceItem.item_id.in_({item_id for _, item_id in keys}))
+    ).all()
     return {
-        item.item_id: item
-        for item in db_session.scalars(
-            select(MarketplaceItem).where(
-                MarketplaceItem.marketplace == MARKETPLACE,
-                MarketplaceItem.item_id.in_(item_ids),
-            )
-        ).all()
+        (item.marketplace, item.item_id): item
+        for item in items
+        if (item.marketplace, item.item_id) in wanted
     }
 
 
+def _backfill_license_plates(db_session: Session) -> None:
+    """Plates of items archived before plates were stored (Marktplaats car attributes)."""
+    for item in db_session.scalars(
+        select(MarketplaceItem).where(
+            MarketplaceItem.license_plate.is_(None),
+            MarketplaceItem.attribute_groups_json.contains('"licensePlate"'),
+        )
+    ).all():
+        item.license_plate = plate_from_attributes(json.loads(item.attribute_groups_json))
+    db_session.flush()
+
+
 def _new_item(
-    owner_id: str, item_id: str, url: str, title: str, now: datetime
+    owner_id: str, marketplace: str, item_id: str, url: str, title: str, now: datetime
 ) -> MarketplaceItem:
     return MarketplaceItem(
         owner_id=owner_id,
-        marketplace=MARKETPLACE,
+        marketplace=marketplace,
         item_id=item_id,
         url=url,
         title=title[:512],
@@ -730,7 +836,7 @@ def _aware(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
-def _safe_item_id(item_id: str) -> str:
-    if not _ITEM_ID.match(item_id):
-        raise ValueError(f"Unexpected item id: {item_id!r}")
-    return item_id
+def _safe_segment(value: str) -> str:
+    if not _SAFE_SEGMENT.match(value):
+        raise ValueError(f"Unexpected path segment: {value!r}")
+    return value

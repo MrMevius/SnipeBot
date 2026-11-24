@@ -162,3 +162,17 @@ def _ensure_legacy_columns() -> None:
             )
 
         connection.execute(text(COPY_LEGACY_SEARCH_SOURCES))
+
+        item_rows = connection.execute(
+            text("PRAGMA table_info('marketplace_items')")
+        ).fetchall()
+        if "license_plate" not in {row[1] for row in item_rows}:
+            connection.execute(
+                text("ALTER TABLE marketplace_items ADD COLUMN license_plate VARCHAR(16)")
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_marketplace_items_license_plate "
+                    "ON marketplace_items (license_plate)"
+                )
+            )

@@ -51,9 +51,10 @@ from snipebot.adapters.marketplaces.platforms import (
 from snipebot.core.config import Settings
 from snipebot.core.metrics import metrics
 from snipebot.domain.marketplace_archive import (
-    MARKETPLACE as ARCHIVE_MARKETPLACE,
+    ARCHIVE_MARKETPLACES,
+    mark_listings_missing,
+    observe_listings,
 )
-from snipebot.domain.marketplace_archive import mark_listings_missing, observe_listings
 from snipebot.domain.price_checks import resolve_notification_settings
 from snipebot.domain.search_filters import (
     FILTER_LABELS,
@@ -650,7 +651,7 @@ def check_source(
                 )
             )
 
-    archive = settings.marketplace_archive_enabled and source.marketplace == ARCHIVE_MARKETPLACE
+    archive = settings.marketplace_archive_enabled and source.marketplace in ARCHIVE_MARKETPLACES
     if archive:
         observe_listings(db_session, search, matching, now)
 
@@ -668,7 +669,7 @@ def check_source(
                 row.gone_at = now
                 missing.append(row.item_id)
         if archive:
-            mark_listings_missing(db_session, missing, now)
+            mark_listings_missing(db_session, source.marketplace, missing, now)
 
     ids = [value for listing in page.listings if (value := listing.numeric_id) is not None]
     if ids:

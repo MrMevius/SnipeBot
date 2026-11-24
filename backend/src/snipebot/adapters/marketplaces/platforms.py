@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from snipebot.adapters.marketplaces.autotrack import AutoTrackAdapter
 from snipebot.adapters.marketplaces.base import PlatformAdapter
 from snipebot.adapters.marketplaces.marktplaats import MarktplaatsAdapter
 
@@ -15,7 +16,7 @@ def get_adapters() -> dict[str, PlatformAdapter]:
     """Shared adapters, so their taxonomy caches survive between requests."""
     global _adapters
     if _adapters is None:
-        _adapters = {"marktplaats": MarktplaatsAdapter()}
+        _adapters = {"marktplaats": MarktplaatsAdapter(), "autotrack": AutoTrackAdapter()}
     return _adapters
 
 

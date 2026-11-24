@@ -36,6 +36,7 @@ function backgroundResponse(url: string) {
 
 const summary = {
   id: 3,
+  marketplace: "marktplaats",
   item_id: "m300",
   title: "Volkswagen Golf 300",
   url: "https://www.marktplaats.nl/v/auto-s/volkswagen/m300-golf",
@@ -56,6 +57,10 @@ const summary = {
 const detail = {
   ...summary,
   postcode: "7600AA",
+  license_plate: "S123AB",
+  duplicates: [
+    { id: 9, marketplace: "autotrack", title: "Volkswagen Golf GTI", price: 20950, status: "archived", gone_at: null },
+  ],
   category: ["Auto's", "Volkswagen"],
   description_html: "<strong>Nette auto</strong><br>Nieuwe APK.",
   attribute_groups: [
@@ -158,6 +163,9 @@ describe("Archive", () => {
     expect(await screen.findByRole("heading", { name: "Volkswagen Golf 300" })).toBeTruthy();
     expect(screen.getByText("Nette auto").tagName).toBe("STRONG");
     expect(screen.getByText("Testverkoper")).toBeTruthy();
+    const duplicates = screen.getByTestId("archive-duplicates");
+    expect(duplicates.textContent).toContain("AutoTrack: Volkswagen Golf GTI");
+    expect(duplicates.querySelector("a")?.getAttribute("href")).toBe("/archive/9");
     expect(screen.getByText("Private")).toBeTruthy();
     expect(screen.getByText("Bouwjaar")).toBeTruthy();
     expect(screen.getByText("1 photo(s) removed from the listing")).toBeTruthy();

@@ -32,3 +32,11 @@ The system SHALL turn searches created from a Marktplaats URL into a Marktplaats
 #### Scenario: Switch to filters
 - **WHEN** such a search is given filters that produce the same Marktplaats query
 - **THEN** no new baseline is recorded
+
+### Requirement: The same car is recognized across platforms
+The system SHALL store the license plate of archived listings when the platform shows it, and SHALL link archived listings that share a plate.
+
+#### Scenario: Car on Marktplaats and AutoTrack
+- **WHEN** an AutoTrack listing and a Marktplaats listing show the same plate
+- **THEN** both archive pages list the other listing
+- **AND** both stay separate listings with separate alerts
