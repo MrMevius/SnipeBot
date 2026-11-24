@@ -142,7 +142,7 @@ def test_baseline_is_silent_then_new_listing_alerts_once() -> None:
     assert "Volkswagen Golf 300" in message.body
     assert "💶 € 15.000" in message.body
     assert "🚗 2021 · 64.500 km · Benzine · Automaat" in message.body
-    assert "📍 Almelo (12 km)" in message.body
+    assert "📍 🇳🇱 Almelo · 12 km" in message.body
     assert message.body.endswith("/v/auto-s/volkswagen/m300-volkswagen-golf")
     assert message.photo_url == "https://images.example.test/m300_85.jpg"
 

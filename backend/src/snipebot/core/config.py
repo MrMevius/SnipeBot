@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     marketplace_archive_delay_seconds: float = 3.0
     marketplace_archive_tick_budget_seconds: int = 45
     marketplace_archive_refresh_days: int = 7
+    # Home location for distances to listings (e.g. "Daarle", "7683", 52.43, 6.54).
+    home_name: str | None = None
+    home_postcode: str | None = None
+    home_country: str = "NL"
+    home_latitude: float | None = None
+    home_longitude: float | None = None
 
     @property
     def is_sqlite(self) -> bool:
@@ -109,7 +115,16 @@ def get_settings() -> Settings:
         marketplace_archive_refresh_days=int(
             _get_env("SNIPEBOT_MARKETPLACE_ARCHIVE_REFRESH_DAYS", "7")
         ),
+        home_name=_get_env("SNIPEBOT_HOME_NAME", "") or None,
+        home_postcode=_get_env("SNIPEBOT_HOME_POSTCODE", "") or None,
+        home_country=_get_env("SNIPEBOT_HOME_COUNTRY", "NL"),
+        home_latitude=_optional_float(_get_env("SNIPEBOT_HOME_LATITUDE", "")),
+        home_longitude=_optional_float(_get_env("SNIPEBOT_HOME_LONGITUDE", "")),
     )
+
+
+def _optional_float(value: str) -> float | None:
+    return float(value) if value.strip() else None
 
 
 def _get_env(name: str, default: str) -> str:

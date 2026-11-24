@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from snipebot.adapters.marketplaces.base import PlatformAdapter
+from snipebot.core.config import get_settings
+
+from snipebot.adapters.marketplaces.base import HomeLocation, PlatformAdapter
 from snipebot.adapters.marketplaces.marktplaats import TWEEDEHANDS, MarktplaatsAdapter
 from snipebot.adapters.marketplaces.scout24 import AUTOSCOUT24, AUTOTRACK, Scout24Adapter
 
@@ -26,13 +28,28 @@ def get_adapters() -> dict[str, PlatformAdapter]:
     """Shared adapters, so their taxonomy caches survive between requests."""
     global _adapters
     if _adapters is None:
+        home = home_location()
         _adapters = {
-            "marktplaats": MarktplaatsAdapter(),
-            "2dehands": MarktplaatsAdapter(site=TWEEDEHANDS),
-            "autoscout24": Scout24Adapter(AUTOSCOUT24),
-            "autotrack": Scout24Adapter(AUTOTRACK),
+            "marktplaats": MarktplaatsAdapter(home=home),
+            "2dehands": MarktplaatsAdapter(site=TWEEDEHANDS, home=home),
+            "autoscout24": Scout24Adapter(AUTOSCOUT24, home=home),
+            "autotrack": Scout24Adapter(AUTOTRACK, home=home),
         }
     return _adapters
+
+
+def home_location() -> HomeLocation | None:
+    """The configured home location (SNIPEBOT_HOME_*), if complete."""
+    settings = get_settings()
+    if settings.home_latitude is None or settings.home_longitude is None:
+        return None
+    return HomeLocation(
+        name=settings.home_name or "home",
+        latitude=settings.home_latitude,
+        longitude=settings.home_longitude,
+        postcode=settings.home_postcode,
+        country=settings.home_country,
+    )
 
 
 def platform_label(key: str) -> str:

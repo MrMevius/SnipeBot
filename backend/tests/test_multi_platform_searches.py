@@ -298,3 +298,35 @@ def test_switching_to_exclude_removes_recorded_unknown_listings() -> None:
     )
     _run(adapters, CollectingNotifier())
     assert "at-2" not in _rows()
+
+
+def test_distances_from_home() -> None:
+    from marktplaats_fakes import FakeFetcher, listing, search_payload
+    from scout24_fakes import FakeScout24, search_listing, search_page
+    from snipebot.adapters.marketplaces.base import HomeLocation, distance_meters
+    from snipebot.adapters.marketplaces.marktplaats import (
+        TWEEDEHANDS,
+        MarktplaatsAdapter,
+        MarktplaatsClient,
+    )
+    from snipebot.adapters.marketplaces.scout24 import AUTOSCOUT24, Scout24Client
+
+    daarle = HomeLocation(name="Daarle", latitude=52.4328, longitude=6.5374, postcode="7683")
+    # Daarle → Gent is about 247 km in a straight line.
+    assert 240_000 < distance_meters(daarle, 51.0543, 3.7174) < 255_000
+    assert distance_meters(None, 51.0, 3.7) is None
+    assert distance_meters(daarle, None, 3.7) is None
+
+    fetcher = FakeFetcher()
+    fetcher.payloads.append(
+        search_payload([listing(1, distance_meters=-1000, coordinates=(51.0543, 3.7174))])
+    )
+    client = MarktplaatsClient(fetch=fetcher, site=TWEEDEHANDS, home=daarle)
+    [car] = MarktplaatsAdapter(client).search({"l1_category_id": 91}).listings
+    assert 240 < car.distance_meters / 1000 < 255
+
+    fake = FakeScout24(AUTOSCOUT24)
+    fake.search_pages.append({1: search_page([search_listing(1, site=AUTOSCOUT24, distance_km=182)])})
+    page = Scout24Client(AUTOSCOUT24, fetch=fake, home=daarle).search({"cat": "ma1mo2"})
+    assert "zip=7683&zipc=NL&zipr=2000" in fake.requests[-1]
+    assert page.listings[0].distance_meters == 182_000

@@ -13,7 +13,7 @@ from snipebot.adapters.marketplaces.base import (
     PlatformAdapter,
     SearchFilters,
 )
-from snipebot.adapters.marketplaces.platforms import get_adapters, platform_label
+from snipebot.adapters.marketplaces.platforms import get_adapters, home_location, platform_label
 from snipebot.api.deps import (
     RequestIdentity,
     enforce_write_rate_limit,
@@ -224,6 +224,8 @@ class ListingResponse(BaseModel):
 class ListingListResponse(BaseModel):
     search_id: int
     items: list[ListingResponse]
+    # Name of the place distances are measured from (straight line), if set.
+    distance_from: str | None = None
 
 
 def _raise_for_marketplace(exc: MarketplaceError) -> None:
@@ -535,7 +537,9 @@ def get_listings(
     archive_ids = archive_ids_for(
         db_session, owner_id=identity.owner_id, item_ids=[row.item_id for row in rows]
     )
+    home = home_location()
     return ListingListResponse(
         search_id=search.id,
+        distance_from=home.name if home is not None else None,
         items=[_listing_response(row, now, archive_ids.get(row.item_id)) for row in rows],
     )

@@ -245,6 +245,7 @@ describe("Marktplaats searches", () => {
       if (url.endsWith("/searches/7/listings")) {
         return jsonResponse({
           search_id: 7,
+          distance_from: "Daarle",
           items: [
             {
               id: 1,
@@ -260,7 +261,7 @@ describe("Marktplaats searches", () => {
               city: "Almelo",
               distance_km: 12,
               seller_type: "private",
-              attributes: { constructionYear: "2021", mileage: "64500", fuel: "Benzine" },
+              attributes: { constructionYear: "2021", mileage: "64500", fuel: "Benzine", country: "NL" },
               is_new: true,
               first_seen_at: "2026-11-23T10:00:00Z",
               last_seen_at: "2026-11-23T10:00:00Z",
@@ -289,7 +290,9 @@ describe("Marktplaats searches", () => {
     expect(text).toContain("2021");
     expect(text.replace(/\s/g, " ")).toContain("64.500 km");
     expect(text).toContain("Benzine");
-    expect(text).toContain("Almelo (12 km)");
+    expect(text).toContain("Almelo12 km");
+    expect(screen.getByTestId("listing-row-m300").querySelector(".flag-nl")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Location · km from Daarle/ })).toBeTruthy();
     expect(text).toContain("AutoTrack");
     expect(text).toContain("battery capacity unknown");
     expect(screen.getByTestId("source-autotrack").textContent).toContain("SnipeBot checks battery capacity itself");

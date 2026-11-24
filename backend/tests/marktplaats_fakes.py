@@ -77,6 +77,8 @@ def listing(
     description: str = "Nette auto",
     advertiser: str | None = None,
     distance_meters: int = 12000,
+    coordinates: tuple[float, float] | None = None,
+    country_name: str = "Nederland",
 ) -> dict[str, Any]:
     item_id = f"m{number}"
     extended = [{"key": "advertiser", "value": advertiser, "values": [advertiser]}] if advertiser else []
@@ -85,7 +87,16 @@ def listing(
         "title": title or f"Volkswagen Golf {number}",
         "description": description,
         "priceInfo": {"priceCents": price_cents, "priceType": "FIXED"},
-        "location": {"cityName": "Almelo", "distanceMeters": distance_meters},
+        "location": {
+            "cityName": "Almelo",
+            "countryName": country_name,
+            "distanceMeters": distance_meters,
+            **(
+                {"latitude": coordinates[0], "longitude": coordinates[1]}
+                if coordinates
+                else {}
+            ),
+        },
         "date": "Vandaag",
         "imageUrls": [f"//images.example.test/{item_id}_82.jpg"],
         "pictures": [

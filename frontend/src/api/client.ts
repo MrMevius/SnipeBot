@@ -739,12 +739,15 @@ export async function triggerMarketplaceSearchCheckNow(
   return parseResponse<MarketplaceSearch>(response);
 }
 
-export async function fetchMarketplaceListings(
-  searchId: number,
-): Promise<MarketplaceListing[]> {
+export type MarketplaceListingList = {
+  items: MarketplaceListing[];
+  // Place distances are measured from (straight line), if configured.
+  distance_from?: string | null;
+};
+
+export async function fetchMarketplaceListings(searchId: number): Promise<MarketplaceListingList> {
   const response = await apiFetch(`${API_BASE_URL}/searches/${searchId}/listings`);
-  const payload = await parseResponse<{ items: MarketplaceListing[] }>(response);
-  return payload.items;
+  return parseResponse<MarketplaceListingList>(response);
 }
 
 export type ArchiveStatus = "pending" | "archived" | "gone" | "error";

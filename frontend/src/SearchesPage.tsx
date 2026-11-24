@@ -109,6 +109,42 @@ function CeilingInput({ value, onChange }: { value: string; onChange: (value: st
   );
 }
 
+const PLATFORM_COUNTRY: Record<string, string> = { marktplaats: "NL", "2dehands": "BE", autotrack: "NL" };
+
+function listingCountry(listing: MarketplaceListing): string | null {
+  const stated = listing.attributes.country;
+  // Older rows of Scout24 sites carried the country in the city: "Gent (BE)".
+  const fromCity = listing.city?.match(/\(([A-Z]{2})\)$/)?.[1];
+  return stated ?? fromCity ?? PLATFORM_COUNTRY[listing.marketplace] ?? null;
+}
+
+const FLAG_NAMES: Record<string, string> = {
+  NL: "Nederland",
+  BE: "België",
+  DE: "Duitsland",
+  FR: "Frankrijk",
+  LU: "Luxemburg",
+  AT: "Oostenrijk",
+  IT: "Italië",
+  PL: "Polen",
+};
+
+// CSS flags: Windows browsers show emoji flags as two letters.
+function CountryFlag({ code }: { code: string | null }) {
+  if (!code) return null;
+  const known = code in FLAG_NAMES;
+  return (
+    <span
+      className={known ? `flag flag-${code.toLowerCase()}` : "flag flag-unknown"}
+      title={FLAG_NAMES[code] ?? code}
+      aria-label={FLAG_NAMES[code] ?? code}
+      role="img"
+    >
+      {known ? null : code}
+    </span>
+  );
+}
+
 // "24-11 13:56"; the year is added for other years.
 function formatShortDate(value: string): string {
   const date = new Date(value.endsWith("Z") || value.includes("+") ? value : `${value}Z`);
@@ -891,6 +927,7 @@ function SearchDetail({
   const [ceiling, setCeiling] = useState("");
   const [unknownPolicy, setUnknownPolicy] = useState<UnknownPolicy>("include");
   const [showGone, setShowGone] = useState(false);
+  const [distanceFrom, setDistanceFrom] = useState<string | null>(null);
   const [listingSort, setListingSort] = useState<ListingSort>({ column: "first_seen", direction: "desc" });
   const [busy, setBusy] = useState(false);
 
@@ -901,7 +938,8 @@ function SearchDetail({
         fetchMarketplaceListings(searchId),
       ]);
       setSearch(searchPayload);
-      setListings(listingPayload);
+      setListings(listingPayload.items);
+      setDistanceFrom(listingPayload.distance_from ?? null);
       setName(searchPayload.name);
       setFilterForm(filterFormFrom(searchPayload));
       setKeywords(searchPayload.exclude_keywords.join(", "));
@@ -1121,7 +1159,7 @@ function SearchDetail({
                   {hasMileage && sortHeader("mileage", "Mileage", "num")}
                   {hasDetails && <th>Details</th>}
                   {multiPlatform && <th>Platform</th>}
-                  {sortHeader("distance", "Location")}
+                  {sortHeader("distance", distanceFrom ? `Location · km from ${distanceFrom}` : "Location")}
                   {sortHeader("first_seen", "First seen", "num")}
                 </tr>
               </thead>
@@ -1202,8 +1240,13 @@ function SearchDetail({
                       </td>
                     )}
                     <td>
-                      {listing.city ?? "–"}
-                      {listing.distance_km !== null ? ` (${listing.distance_km} km)` : ""}
+                      <div className="listing-location">
+                        <CountryFlag code={listingCountry(listing)} />
+                        <span>{listing.city ?? "–"}</span>
+                        {listing.distance_km !== null && (
+                          <span className="listing-distance">{listing.distance_km.toLocaleString("nl-NL")} km</span>
+                        )}
+                      </div>
                       {listing.seller_type && listing.seller_type !== "all" && (
                         <div className="compact-cell-sub muted">
                           {listing.seller_type === "private" ? "Private" : "Business"}
