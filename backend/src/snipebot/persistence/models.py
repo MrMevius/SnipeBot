@@ -418,6 +418,8 @@ class MarketplaceItem(Base):
     thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)
     postcode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Normalized (letters and digits); the same car on several platforms shares it.
+    license_plate: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     category_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     summary_attributes_json: Mapped[str] = mapped_column(
         Text, nullable=False, default="{}"

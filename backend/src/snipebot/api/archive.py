@@ -20,6 +20,7 @@ from snipebot.domain.marketplace_archive import (
     build_store,
     cover_images,
     delete_archive_item,
+    duplicate_items,
     get_archive_image,
     get_archive_item,
     item_searches,
@@ -44,6 +45,7 @@ class ArchiveSearchRef(BaseModel):
 
 class ArchiveItemSummary(BaseModel):
     id: int
+    marketplace: str
     item_id: str
     title: str
     url: str
@@ -102,8 +104,19 @@ class ArchiveVersionResponse(BaseModel):
     images_removed: int
 
 
+class ArchiveDuplicate(BaseModel):
+    id: int
+    marketplace: str
+    title: str
+    price: float | None
+    status: str
+    gone_at: datetime | None
+
+
 class ArchiveItemDetail(ArchiveItemSummary):
     postcode: str | None
+    license_plate: str | None
+    duplicates: list[ArchiveDuplicate]
     category: list[str]
     description_html: str | None
     attribute_groups: list[dict[str, Any]]
@@ -124,6 +137,7 @@ def _summary_fields(
 ) -> dict[str, Any]:
     return {
         "id": item.id,
+        "marketplace": item.marketplace,
         "item_id": item.item_id,
         "title": item.title,
         "url": item.url,
@@ -179,6 +193,18 @@ def _detail_response(
             searches.get(item.item_id, []),
         ),
         postcode=item.postcode,
+        license_plate=item.license_plate,
+        duplicates=[
+            ArchiveDuplicate(
+                id=other.id,
+                marketplace=other.marketplace,
+                title=other.title,
+                price=float(other.price) if other.price is not None else None,
+                status=other.status,
+                gone_at=other.gone_at,
+            )
+            for other in duplicate_items(db_session, item)
+        ],
         category=json.loads(item.category_json or "[]"),
         description_html=item.description_html,
         attribute_groups=json.loads(item.attribute_groups_json or "[]"),
@@ -213,6 +239,7 @@ def get_archive(
     q: str | None = Query(default=None, max_length=200),
     search_id: int | None = None,
     status: Literal["online", "gone"] | None = None,
+    marketplace: str | None = Query(default=None, max_length=32),
     sort: Literal["first_seen", "last_seen", "price", "title"] = "first_seen",
     order: Literal["asc", "desc"] = "desc",
     limit: int = Query(default=50, ge=1, le=200),
@@ -226,6 +253,7 @@ def get_archive(
         q=q,
         search_id=search_id,
         status=status,
+        marketplace=marketplace,
         sort=sort,
         order=order,
         limit=limit,

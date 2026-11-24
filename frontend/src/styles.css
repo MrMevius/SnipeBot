@@ -1270,3 +1270,16 @@ button.archive-thumb.active {
     grid-template-columns: 1fr;
   }
 }
+
+.archive-duplicates {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: rgba(31, 111, 235, 0.06);
+}
+
+.archive-duplicates ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}

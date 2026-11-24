@@ -9,10 +9,12 @@ import {
   MarketplaceSearch,
   archiveImageUrl,
   deleteArchiveItem,
+  PLATFORM_LABELS,
   fetchArchive,
   fetchArchiveItem,
   fetchMarketplaceSearches,
   refreshArchiveItem,
+  platformLabel,
 } from "./api/client";
 
 const PAGE_SIZE = 50;
@@ -81,6 +83,7 @@ function ArchiveList({ onNavigate }: { onNavigate: (href: string) => void }) {
   const [appliedText, setAppliedText] = useState("");
   const [searchId, setSearchId] = useState("");
   const [status, setStatus] = useState<"" | "online" | "gone">("");
+  const [platform, setPlatform] = useState("");
   const [sort, setSort] = useState<SortColumn>("first_seen");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [offset, setOffset] = useState(0);
@@ -99,6 +102,7 @@ function ArchiveList({ onNavigate }: { onNavigate: (href: string) => void }) {
       q: appliedText || undefined,
       search_id: searchId ? Number(searchId) : undefined,
       status: status || undefined,
+      marketplace: platform || undefined,
       sort,
       order,
       limit: PAGE_SIZE,
@@ -116,7 +120,7 @@ function ArchiveList({ onNavigate }: { onNavigate: (href: string) => void }) {
     return () => {
       cancelled = true;
     };
-  }, [appliedText, searchId, status, sort, order, offset]);
+  }, [appliedText, searchId, status, platform, sort, order, offset]);
 
   function sortBy(column: SortColumn) {
     setOffset(0);
@@ -200,6 +204,23 @@ function ArchiveList({ onNavigate }: { onNavigate: (href: string) => void }) {
             <option value="gone">Gone</option>
           </select>
         </label>
+        <label>
+          Platform
+          <select
+            value={platform}
+            onChange={(event) => {
+              setOffset(0);
+              setPlatform(event.target.value);
+            }}
+          >
+            <option value="">All platforms</option>
+            {Object.entries(PLATFORM_LABELS).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
         <button type="submit">Search</button>
       </form>
       {error && <p className="error">{error}</p>}
@@ -245,7 +266,9 @@ function ArchiveList({ onNavigate }: { onNavigate: (href: string) => void }) {
                     <td>{formatEuro(item.price)}</td>
                     <td>
                       {carSummary(item.attributes) || "–"}
-                      {item.city && <div className="compact-cell-sub muted">{item.city}</div>}
+                      <div className="compact-cell-sub muted">
+                        {[platformLabel(item.marketplace), item.city].filter(Boolean).join(" · ")}
+                      </div>
                     </td>
                     <td>{item.searches.map((search) => search.name).join(", ") || "–"}</td>
                     <td>{formatDate(item.first_seen_at)}</td>
@@ -307,7 +330,9 @@ function Gallery({ item }: { item: ArchiveItemDetail }) {
     return item.thumbnail_url ? (
       <div className="archive-gallery">
         <img className="archive-main-image" src={item.thumbnail_url} alt="" />
-        <p className="muted">Photos are not archived yet; this preview is loaded from Marktplaats.</p>
+        <p className="muted">
+          Photos are not archived yet; this preview is loaded from {platformLabel(item.marketplace)}.
+        </p>
       </div>
     ) : (
       <p className="muted">No photos archived.</p>
@@ -382,14 +407,17 @@ function sellerTypeLabel(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function SellerBlock({ seller }: { seller: ArchiveItemDetail["seller"] }) {
+function SellerBlock({ seller, platform }: { seller: ArchiveItemDetail["seller"]; platform: string }) {
   const rows: [string, ReactNode][] = [];
   if (seller.name) rows.push(["Name", String(seller.name)]);
+  if (seller.contactName) rows.push(["Contact", String(seller.contactName)]);
   const type = sellerTypeLabel(seller.sellerType);
   if (type) rows.push(["Type", type]);
-  if (seller.activeSinceDiff) rows.push(["Active on Marktplaats", String(seller.activeSinceDiff)]);
-  if (seller.city) rows.push(["Location", String(seller.city)]);
+  if (seller.activeSinceDiff) rows.push([`Active on ${platform}`, String(seller.activeSinceDiff)]);
+  if (seller.address) rows.push(["Address", String(seller.address)]);
+  else if (seller.city) rows.push(["Location", String(seller.city)]);
   if (seller.phoneNumber) rows.push(["Phone", String(seller.phoneNumber)]);
+  if (seller.rating) rows.push(["Rating", String(seller.rating)]);
   if (seller.sellerWebsiteDisplayUrl) rows.push(["Website", String(seller.sellerWebsiteDisplayUrl)]);
   if (seller.sellerProfileUrl) {
     rows.push([
@@ -564,7 +592,7 @@ function ArchiveDetail({
           </div>
           <div className="archive-actions">
             <a className="button-link" href={item.url} target="_blank" rel="noreferrer">
-              Open on Marktplaats
+              Open on {platformLabel(item.marketplace)}
             </a>
             <button type="button" className="secondary" onClick={() => void handleRefresh()}>
               Fetch again
@@ -587,6 +615,22 @@ function ArchiveDetail({
         )}
         {error && <p className="error">{error}</p>}
         {feedback && <p className="success">{feedback}</p>}
+        {item.duplicates.length > 0 && (
+          <div className="archive-duplicates" data-testid="archive-duplicates">
+            <strong>Same car (license plate {item.license_plate}) also listed:</strong>
+            <ul>
+              {item.duplicates.map((other) => (
+                <li key={other.id}>
+                  <a href={`/archive/${other.id}`} onClick={navigateLink(`/archive/${other.id}`, onNavigate)}>
+                    {platformLabel(other.marketplace)}: {other.title}
+                  </a>{" "}
+                  · {formatEuro(other.price)}
+                  {other.gone_at ? " · gone" : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <Gallery item={item} />
       </section>
 
@@ -613,13 +657,19 @@ function ArchiveDetail({
 
         <section className="panel">
           <h2>Seller</h2>
-          <SellerBlock seller={item.seller} />
+          <SellerBlock seller={item.seller} platform={platformLabel(item.marketplace)} />
           <h2>Listing</h2>
           <dl className="archive-facts">
             <div>
-              <dt>Marktplaats id</dt>
+              <dt>{platformLabel(item.marketplace)} id</dt>
               <dd>{item.item_id}</dd>
             </div>
+            {item.license_plate && (
+              <div>
+                <dt>License plate</dt>
+                <dd>{item.license_plate}</dd>
+              </div>
+            )}
             <div>
               <dt>Online since</dt>
               <dd>{formatDate(item.stats.since)}</dd>

@@ -744,8 +744,18 @@ export async function fetchMarketplaceListings(
 
 export type ArchiveStatus = "pending" | "archived" | "gone" | "error";
 
+export const PLATFORM_LABELS: Record<string, string> = {
+  marktplaats: "Marktplaats",
+  autotrack: "AutoTrack",
+};
+
+export function platformLabel(key: string): string {
+  return PLATFORM_LABELS[key] ?? key;
+}
+
 export type ArchiveItemSummary = {
   id: number;
+  marketplace: string;
   item_id: string;
   title: string;
   url: string;
@@ -781,6 +791,7 @@ export type ArchiveQuery = {
   q?: string;
   search_id?: number;
   status?: "online" | "gone";
+  marketplace?: string;
   sort?: "first_seen" | "last_seen" | "price" | "title";
   order?: "asc" | "desc";
   limit?: number;
@@ -801,8 +812,19 @@ export type ArchiveVersion = {
   images_removed: number;
 };
 
+export type ArchiveDuplicate = {
+  id: number;
+  marketplace: string;
+  title: string;
+  price: number | null;
+  status: ArchiveStatus;
+  gone_at: string | null;
+};
+
 export type ArchiveItemDetail = ArchiveItemSummary & {
   postcode: string | null;
+  license_plate: string | null;
+  duplicates: ArchiveDuplicate[];
   category: string[];
   description_html: string | null;
   attribute_groups: ArchiveAttributeGroup[];

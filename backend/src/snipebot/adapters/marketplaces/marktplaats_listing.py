@@ -213,6 +213,14 @@ def image_fetch(url: str) -> bytes:
     return data
 
 
+def sanitize_description(fragment: str) -> tuple[str, str]:
+    """(allowlisted HTML, plain text) of a description given as an HTML fragment."""
+    markup = _ListingMarkup()
+    markup.feed(f'<div data-collapsable="description">{fragment}</div>')
+    markup.close()
+    return markup.description_html(), markup.description_text()
+
+
 def _config_listing(page_html: str) -> dict[str, Any]:
     match = _CONFIG_MARKER.search(page_html)
     if match is None:

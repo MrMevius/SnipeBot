@@ -52,7 +52,7 @@ class Listing:
     seller_type: str | None
     marketplace: str = "marktplaats"
     # Normalized numbers for filtering: year, mileage, range (km), battery (kWh).
-    specs: dict[str, int] = field(default_factory=dict)
+    specs: dict[str, float] = field(default_factory=dict)
     license_plate: str | None = None
 
     @property
