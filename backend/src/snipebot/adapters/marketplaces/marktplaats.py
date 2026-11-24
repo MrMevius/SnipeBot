@@ -38,6 +38,7 @@ from snipebot.adapters.marketplaces.base import (
     TtlCache,
     distance_meters,
     find_option,
+    power_kw,
 )
 from snipebot.adapters.marketplaces.scout24 import battery_kwh
 
@@ -382,6 +383,8 @@ def parse_listing(
     }
     if "battery" not in specs and (battery := battery_kwh(title)) is not None:
         specs["battery"] = battery
+    if (kw := power_kw(attributes.get("enginePowerKW") or attributes.get("power"))) is not None:
+        specs["power"] = kw
 
     price_info = raw.get("priceInfo") or {}
     price_cents = _as_int(price_info.get("priceCents"))

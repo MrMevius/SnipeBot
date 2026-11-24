@@ -86,6 +86,9 @@ function backgroundResponse(url: string) {
       warnings: [],
     });
   }
+  if (url.includes("/searches/models?make=Tesla")) {
+    return jsonResponse({ items: [{ label: "Model 3", platforms: ["marktplaats", "autotrack"] }], warnings: [] });
+  }
   if (url.includes("/searches/models?make=Volkswagen")) {
     return jsonResponse({
       items: [
@@ -133,7 +136,7 @@ describe("Marktplaats searches", () => {
   it("previews before saving a search", async () => {
     const searches: unknown[] = [];
     const expectedPayload = {
-      filters: { ...GOLF_FILTERS, price_max: 25000 },
+      filters: { ...GOLF_FILTERS, price_max: 25000, variants: null },
       platforms: ["marktplaats", "autotrack"],
       seller_type: "private",
       exclude_keywords: ["schade", "export"],
@@ -237,6 +240,43 @@ describe("Marktplaats searches", () => {
     const cheapest = screen.getByTestId("search-cheapest-7");
     expect(cheapest.textContent?.replace(/\s/g, " ")).toContain("€ 21.000 · Marktplaats");
     expect(cheapest.querySelector("a")?.getAttribute("href")).toBe("/archive/3");
+  });
+
+  it("offers the variant filter for the Tesla Model 3 only", async () => {
+    let previewBody: Record<string, unknown> | null = null;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/searches/preview")) {
+        previewBody = JSON.parse(String(init?.body));
+        return jsonResponse({ description: [], platforms: [] });
+      }
+      if (url.endsWith("/searches")) {
+        return jsonResponse({ items: [] });
+      }
+      return backgroundResponse(url);
+    });
+
+    window.history.pushState({}, "", "/searches");
+    render(<App />);
+    await screen.findByRole("option", { name: "Volkswagen" });
+    fireEvent.change(screen.getByLabelText("Make"), { target: { value: "Volkswagen" } });
+    await screen.findByRole("option", { name: "Golf" });
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "Golf" } });
+    expect(screen.queryByTestId("variant-choices")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Make"), { target: { value: "Tesla" } });
+    await screen.findByRole("option", { name: "Model 3" });
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "Model 3" } });
+    fireEvent.change(screen.getByLabelText("Year from"), { target: { value: "2024" } });
+    fireEvent.click(screen.getByLabelText("Long Range RWD"));
+    fireEvent.click(screen.getByLabelText("Long Range AWD"));
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+
+    await waitFor(() => expect(previewBody).not.toBeNull());
+    expect((previewBody as unknown as { filters: { variants: string[] } }).filters.variants).toEqual([
+      "lr_rwd",
+      "lr_awd",
+    ]);
   });
 
   it("shows listings of a search with new and price-drop markers", async () => {

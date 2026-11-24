@@ -68,6 +68,7 @@ class FiltersModel(BaseModel):
     range_min: FilterValue = None
     battery_min: FilterValue = None
     battery_max: FilterValue = None
+    variants: list[str] | None = Field(default=None, max_length=4)
 
     def to_filters(self) -> SearchFilters:
         return SearchFilters(**self.model_dump())

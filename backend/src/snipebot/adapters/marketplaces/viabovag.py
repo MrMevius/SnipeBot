@@ -28,6 +28,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from snipebot.adapters.marketplaces.base import (
+    HP_TO_KW,
     HomeLocation,
     Listing,
     MarketplaceError,
@@ -184,6 +185,9 @@ def parse_result(raw: Any, home: HomeLocation | None = None) -> Listing | None:
         specs["range"] = range_km
     if isinstance(battery_wh, int | float) and battery_wh > 0:
         specs["battery"] = round(battery_wh / 1000, 1)
+    engine_power = vehicle.get("enginePower")  # horsepower (pk)
+    if isinstance(engine_power, int | float) and engine_power > 0:
+        specs["power"] = round(engine_power * HP_TO_KW)
 
     attributes = {
         key: str(value)

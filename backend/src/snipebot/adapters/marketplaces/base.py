@@ -21,6 +21,9 @@ from typing import Any, Protocol, TypeVar
 FILTER_KEYS = ("year", "price", "mileage", "range", "battery")
 
 _MARKTPLAATS_ID = re.compile(r"^m(\d+)$")
+_POWER_KW = re.compile(r"(\d{2,4})\s*kw\b", re.IGNORECASE)
+_POWER_HP = re.compile(r"(\d{2,4})\s*(?:pk|ps|hp|cv|ch)\b", re.IGNORECASE)
+HP_TO_KW = 0.7355
 _NORMALIZE = re.compile(r"[^a-z0-9]+")
 
 T = TypeVar("T")
@@ -52,7 +55,8 @@ class Listing:
     attributes: dict[str, str]
     seller_type: str | None
     marketplace: str = "marktplaats"
-    # Normalized numbers for filtering: year, mileage, range (km), battery (kWh).
+    # Normalized numbers for filtering: year, mileage, range (km), battery (kWh),
+    # power (kW).
     specs: dict[str, float] = field(default_factory=dict)
     license_plate: str | None = None
 
@@ -98,12 +102,15 @@ class SearchFilters:
     range_min: int | None = None
     battery_min: int | None = None
     battery_max: int | None = None
+    # Variant keys (see ``snipebot.domain.car_variants``); always checked by SnipeBot.
+    variants: list[str] | None = None
 
     def bounds(self, key: str) -> tuple[int | None, int | None]:
         return getattr(self, f"{key}_min", None), getattr(self, f"{key}_max", None)
 
     def active_keys(self) -> list[str]:
-        return [key for key in FILTER_KEYS if any(value is not None for value in self.bounds(key))]
+        keys = [key for key in FILTER_KEYS if any(value is not None for value in self.bounds(key))]
+        return [*keys, "variant"] if self.variants else keys
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -151,6 +158,16 @@ class PlatformAdapter(Protocol):
     def build_query(self, filters: SearchFilters, seller_type: str) -> PlatformQuery: ...
 
     def search(self, query: dict[str, Any], *, limit: int | None = None) -> SearchPage: ...
+
+
+def power_kw(text: object) -> int | None:
+    """kW from "208 kW (283 PK)", "320 pk" or "498pk (366kW)" (the kW value preferred)."""
+    value = str(text or "")
+    if match := _POWER_KW.search(value):
+        return int(match.group(1))
+    if match := _POWER_HP.search(value):
+        return round(int(match.group(1)) * HP_TO_KW)
+    return None
 
 
 def normalize_label(value: str) -> str:

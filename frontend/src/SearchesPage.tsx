@@ -193,7 +193,13 @@ function numericAttribute(listing: MarketplaceListing, key: string): number | nu
 }
 
 function carDetails(attributes: Record<string, string>): string {
-  return [attributes.fuel, attributes.transmission].filter(Boolean).join(" · ");
+  const variant = attributes.variant
+    ? attributes.variant
+        .split(",")
+        .map((key) => VARIANT_OPTIONS.find((option) => option.key === key)?.label ?? key)
+        .join(" / ")
+    : null;
+  return [variant, attributes.fuel, attributes.transmission].filter(Boolean).join(" · ");
 }
 
 type ListingSortColumn = "title" | "price" | "year" | "mileage" | "distance" | "first_seen";
@@ -249,7 +255,21 @@ const FILTER_LABELS: Record<string, string> = {
   mileage: "mileage",
   range: "range",
   battery: "battery capacity",
+  variant: "variant",
 };
+
+// Mirrors snipebot.domain.car_variants: only the Tesla Model 3 from 2024 on.
+const VARIANT_OPTIONS: { key: string; label: string }[] = [
+  { key: "sr", label: "Standard Range" },
+  { key: "lr_rwd", label: "Long Range RWD" },
+  { key: "lr_awd", label: "Long Range AWD" },
+  { key: "performance", label: "Performance" },
+];
+
+function supportsVariants(make: string, model: string): boolean {
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return normalize(make) === "tesla" && ["model3", "3"].includes(normalize(model));
+}
 
 type RangeKey =
   | "year_min"
@@ -275,6 +295,7 @@ type FilterForm = {
   model: string;
   platforms: string[];
   ranges: Record<RangeKey, string>;
+  variants: string[];
 };
 
 const EMPTY_RANGES: Record<RangeKey, string> = {
@@ -290,7 +311,7 @@ const EMPTY_RANGES: Record<RangeKey, string> = {
 };
 
 function emptyFilterForm(): FilterForm {
-  return { make: "", model: "", platforms: [], ranges: { ...EMPTY_RANGES } };
+  return { make: "", model: "", platforms: [], ranges: { ...EMPTY_RANGES }, variants: [] };
 }
 
 function filterFormFrom(search: MarketplaceSearch): FilterForm {
@@ -306,6 +327,7 @@ function filterFormFrom(search: MarketplaceSearch): FilterForm {
     model: search.filters?.model ?? "",
     platforms: search.platforms.map((platform) => platform.marketplace),
     ranges,
+    variants: search.filters?.variants ?? [],
   };
 }
 
@@ -324,6 +346,8 @@ function filtersFromForm(form: FilterForm): SearchFilters | string {
     if (Number.isNaN(value)) return "Enter whole numbers in the filter fields, e.g. 40.000.";
     filters[key] = value;
   }
+  filters.variants =
+    supportsVariants(form.make, form.model) && form.variants.length > 0 ? [...form.variants] : null;
   return filters;
 }
 
@@ -390,7 +414,7 @@ function SearchFilterFields({ value, onChange }: { value: FilterForm; onChange: 
   // A newly chosen model starts with every platform that has it.
   function setModel(model: string) {
     const option = models.find((item) => item.label === model);
-    onChange({ ...value, model, platforms: option ? [...option.platforms] : [] });
+    onChange({ ...value, model, platforms: option ? [...option.platforms] : [], variants: [] });
   }
 
   return (
@@ -401,7 +425,9 @@ function SearchFilterFields({ value, onChange }: { value: FilterForm; onChange: 
           <select
             value={value.make}
             required
-            onChange={(event) => onChange({ ...value, make: event.target.value, model: "", platforms: [] })}
+            onChange={(event) =>
+              onChange({ ...value, make: event.target.value, model: "", platforms: [], variants: [] })
+            }
           >
             <option value="">Choose a make…</option>
             {makeLabels.map((label) => (
@@ -480,6 +506,28 @@ function SearchFilterFields({ value, onChange }: { value: FilterForm; onChange: 
           </fieldset>
         ))}
       </div>
+      {supportsVariants(value.make, value.model) && (
+        <fieldset className="platform-choices" data-testid="variant-choices">
+          <legend>Variant (2024 and later; leave empty for all)</legend>
+          {VARIANT_OPTIONS.map((option) => (
+            <label key={option.key} className="toggle-row">
+              <input
+                type="checkbox"
+                checked={value.variants.includes(option.key)}
+                onChange={(event) =>
+                  onChange({
+                    ...value,
+                    variants: event.target.checked
+                      ? [...value.variants, option.key]
+                      : value.variants.filter((key) => key !== option.key),
+                  })
+                }
+              />
+              {option.label}
+            </label>
+          ))}
+        </fieldset>
+      )}
       {warnings.map((warning) => (
         <p key={warning} className="error">
           {warning}
