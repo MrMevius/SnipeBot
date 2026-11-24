@@ -739,7 +739,7 @@ const SUPPORTED_WEBSHOPS: SupportedWebshop[] = [
   { siteKey: "lidl_nl", label: "Lidl NL", domain: "lidl.nl", note: "Controleer de preview voor het opslaan." },
 ];
 
-type CarSiteStatus = "live" | "available" | "planned";
+type CarSiteStatus = "live" | "available" | "planned" | "blocked";
 
 type SupportedCarSite = {
   siteKey: string;
@@ -756,6 +756,7 @@ const CAR_SITE_STATUS: Record<CarSiteStatus, { label: string; tone: string }> = 
   live: { label: "Live", tone: "ok" },
   available: { label: "Beschikbaar", tone: "neutral" },
   planned: { label: "Gepland", tone: "pending" },
+  blocked: { label: "Niet mogelijk", tone: "error" },
 };
 
 // Platforms for car searches (backend/src/snipebot/adapters/marketplaces). "planned" rows are
@@ -816,61 +817,61 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     siteKey: "gaspedaal",
     label: "Gaspedaal",
     domain: "gaspedaal.nl",
-    status: "planned",
+    status: "blocked",
     countries: "NL",
     sellers: "Particulier + dealer",
     filters: "Nog te onderzoeken",
-    note: "Zoekmachine over andere occasionsites: veel dubbelen met wat al gekoppeld is.",
+    note: "Zoekmachine over andere occasionsites: vrijwel alleen dubbelen; niet gepland.",
   },
   {
     siteKey: "autoweek",
     label: "AutoWeek Occasions",
     domain: "autoweek.nl",
-    status: "planned",
+    status: "blocked",
     countries: "NL",
     sellers: "Vooral dealer",
     filters: "Nog te onderzoeken",
-    note: "Occasionaanbod van het automagazine.",
+    note: "Blokkeert SnipeBot (HTTP 403); niet te koppelen.",
   },
   {
     siteKey: "autotrader_nl",
     label: "Autotrader",
     domain: "autotrader.nl",
-    status: "planned",
+    status: "blocked",
     countries: "NL",
     sellers: "Particulier + dealer",
     filters: "Nog te onderzoeken",
-    note: "",
+    note: "Zelfde AutoScout24-platform en advertenties als AutoScout24; levert niets nieuws.",
   },
   {
     siteKey: "anwb_occasions",
     label: "ANWB Occasions",
     domain: "anwb.nl",
-    status: "planned",
+    status: "blocked",
     countries: "NL",
     sellers: "Dealer",
     filters: "Nog te onderzoeken",
-    note: "Occasions van aangesloten dealers.",
+    note: "Geen bruikbare zoekpagina gevonden.",
   },
   {
     siteKey: "mobile_de",
     label: "mobile.de",
     domain: "mobile.de",
-    status: "planned",
+    status: "blocked",
     countries: "DE",
     sellers: "Particulier + dealer",
     filters: "Nog te onderzoeken",
-    note: "Grootste automarkt van Duitsland; prijzen zonder BPM/import.",
+    note: "Blokkeert SnipeBot (HTTP 403) en verbiedt zoekpagina's in robots.txt; niet te koppelen.",
   },
   {
     siteKey: "kleinanzeigen",
     label: "Kleinanzeigen",
     domain: "kleinanzeigen.de",
-    status: "planned",
+    status: "blocked",
     countries: "DE",
     sellers: "Vooral particulier",
     filters: "Nog te onderzoeken",
-    note: "Duitse tegenhanger van Marktplaats.",
+    note: "Weigert geautomatiseerde clients (HTTP 403); niet te koppelen.",
   },
   {
     siteKey: "leboncoin",
@@ -2321,6 +2322,7 @@ export function App() {
             gebeurt als een advertentie de waarde niet noemt, stel je per zoekopdracht in (Value not stated).
             <em> Gepland</em> zijn de grootste Nederlandse en Europese autosites die nog gekoppeld kunnen
             worden; de keuze is een inschatting en per site moet nog onderzocht worden of koppelen kan.
+            <em> Niet mogelijk</em> zijn sites die SnipeBot weigeren of niets nieuws opleveren.
           </p>
           <div className="watchlist-table-scroll">
             <table className="compact-table supported-sites-table">
