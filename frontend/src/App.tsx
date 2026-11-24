@@ -774,6 +774,48 @@ const SUPPORTED_WEBSHOPS: SupportedWebshop[] = [
   },
 ];
 
+type SupportedCarSite = {
+  siteKey: string;
+  label: string;
+  domain: string;
+  facts: string[];
+};
+
+// Platforms for car searches (Searches page); see backend/src/snipebot/adapters/marketplaces.
+const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
+  {
+    siteKey: "marktplaats",
+    label: "Marktplaats",
+    domain: "marktplaats.nl",
+    facts: [
+      "Nederland · particulieren en bedrijven.",
+      "Filtert zelf op alle SnipeBot-filters (bouwjaar, prijs, km-stand, actieradius, accucapaciteit, verkoper).",
+      "Elke controle leest de nieuwste 100 advertenties.",
+    ],
+  },
+  {
+    siteKey: "autoscout24",
+    label: "AutoScout24",
+    domain: "autoscout24.nl",
+    facts: [
+      "Nederland, België en Duitsland · dealers en particulieren.",
+      "Filtert zelf op bouwjaar, prijs, km-stand en verkoper. Actieradius en accucapaciteit controleert SnipeBot zelf; kies per zoekopdracht wat er gebeurt als een advertentie die waarde niet noemt (Value not stated).",
+      "Buitenlandse auto's tonen het land bij de plaats, bijv. Dilbeek (BE); de prijs is zonder Nederlandse BPM en importkosten.",
+      "Bevat alle AutoTrack-advertenties met hetzelfde id.",
+    ],
+  },
+  {
+    siteKey: "autotrack",
+    label: "AutoTrack",
+    domain: "autotrack.nl",
+    facts: [
+      "Nederland · alleen dealers (niet bruikbaar met 'Private only').",
+      "Filtert zelf op bouwjaar, prijs en km-stand; actieradius en accucapaciteit controleert SnipeBot zelf.",
+      "Alle advertenties staan ook op AutoScout24; kies bij voorkeur AutoScout24. Wisselen van AutoTrack naar AutoScout24 behoudt advertenties, prijshistorie en archief.",
+    ],
+  },
+];
+
 const SORT_BY_COLUMN: Record<SortableColumn, { asc: SortOption; desc: SortOption }> = {
   product: { asc: "label_asc", desc: "label_desc" },
   site: { asc: "site_asc", desc: "site_desc" },
@@ -1073,7 +1115,7 @@ function ProductDetailPage({
     },
     {
       key: "supported-shops",
-      label: "Supported shops",
+      label: "Supported sites",
       href: "/",
       active: menuView === "supported-shops",
       onClick: (event) => {
@@ -1393,7 +1435,7 @@ export function App() {
     },
     {
       key: "supported-shops",
-      label: "Supported shops",
+      label: "Supported sites",
       href: "/",
       active: route.kind === "overview" && menuView === "supported-shops",
       onClick: (event) => {
@@ -2158,10 +2200,11 @@ export function App() {
       ) : null}
 
       {menuView === "supported-shops" ? (
-        <section className="panel" data-testid="supported-shops-panel">
-          <h2>Supported shops</h2>
+        <section className="panel supported-shops-panel" data-testid="supported-shops-panel">
+          <h2>Supported sites</h2>
+          <h3>Webshops</h3>
           <p className="muted">
-            Deze webshops worden momenteel ondersteund. Gebruik per shop de korte stappen hieronder.
+            Deze webshops worden ondersteund voor de prijs-watchlist. Gebruik per shop de korte stappen hieronder.
           </p>
 
           <div className="supported-shops-grid">
@@ -2177,6 +2220,31 @@ export function App() {
                     <li key={step}>{step}</li>
                   ))}
                 </ol>
+              </article>
+            ))}
+          </div>
+
+          <h3>Occasion websites</h3>
+          <p className="muted">
+            Voor auto-zoekopdrachten: open <strong>Searches</strong>, kies merk en model, vink de
+            websites aan en stel de filters en het prijsplafond in. SnipeBot controleert elke website
+            ongeveer elke 10 minuten, meldt nieuwe auto's en prijsdalingen via Telegram en bewaart elke
+            advertentie met foto's in het <strong>Archive</strong>. Dezelfde auto op meerdere websites
+            wordt herkend aan het kenteken.
+          </p>
+          <div className="supported-shops-grid">
+            {SUPPORTED_CAR_SITES.map((site) => (
+              <article key={site.siteKey} className="supported-shop-card" data-testid={`car-site-card-${site.siteKey}`}>
+                <header className="supported-shop-head">
+                  <strong>{site.label}</strong>
+                  <span className="supported-shop-key">{site.siteKey}</span>
+                </header>
+                <div className="muted">Domain: {site.domain}</div>
+                <ul>
+                  {site.facts.map((fact) => (
+                    <li key={fact}>{fact}</li>
+                  ))}
+                </ul>
               </article>
             ))}
           </div>
