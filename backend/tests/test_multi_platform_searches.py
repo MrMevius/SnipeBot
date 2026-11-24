@@ -379,3 +379,34 @@ def test_variant_filter_is_checked_by_snipebot() -> None:
     assert [message.title for message in notifier.messages] == [
         "🆕 Nieuwe advertentie — Model 3 SR"
     ]
+
+
+def test_changed_filters_drop_listings_that_no_longer_match() -> None:
+    _reset()
+    adapters = _adapters()
+    notifier = CollectingNotifier()
+    search_id = _create(adapters, platforms=("autotrack",))
+    page = lambda: SearchPage(  # noqa: E731
+        2,
+        [
+            car("autotrack", "at-1", title="Tesla Model 3 Standard Range", specs={"battery": 60}),
+            car("autotrack", "at-2", title="Tesla Model 3 Long Range AWD"),
+        ],
+        complete=True,
+    )
+    adapters["autotrack"].pages.append(page())
+    _run(adapters, notifier)
+    assert sorted(_rows()) == ["at-1", "at-2"]  # at-2: battery unknown, kept
+
+    with get_session_factory()() as session:
+        search = session.get(MarketplaceSearch, search_id)
+        update_search(
+            session,
+            adapters,
+            search,
+            filters=SearchFilters(make="Tesla", model="Model 3", year_min=2024, variants=["sr"]),
+        )
+    adapters["autotrack"].pages.append(page())
+    _run(adapters, notifier)
+    assert sorted(_rows()) == ["at-1"]
+    assert notifier.messages == []
