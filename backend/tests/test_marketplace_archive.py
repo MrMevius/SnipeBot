@@ -14,7 +14,12 @@ from marktplaats_fakes import (
     listing_page_html,
     search_payload,
 )
-from snipebot.adapters.marketplaces.marktplaats import MarktplaatsClient, MarktplaatsError
+from snipebot.adapters.marketplaces.base import SearchFilters
+from snipebot.adapters.marketplaces.marktplaats import (
+    MarktplaatsAdapter,
+    MarktplaatsClient,
+    MarktplaatsError,
+)
 from snipebot.adapters.marketplaces.marktplaats_listing import (
     image_fetch,
     parse_listing_page,
@@ -35,6 +40,7 @@ from snipebot.persistence.models import (
     MarketplaceItemImage,
     MarketplaceListing,
     MarketplaceSearch,
+    MarketplaceSearchSource,
 )
 
 LISTING_URL = "https://www.marktplaats.nl/v/auto-s/volkswagen/m5-volkswagen-golf"
@@ -52,6 +58,7 @@ def _clean_tables():
             "marketplace_alert_events",
             "marketplace_listing_prices",
             "marketplace_listings",
+            "marketplace_search_sources",
             "marketplace_searches",
         ):
             connection.exec_driver_sql(f"DELETE FROM {table}")
@@ -172,14 +179,19 @@ def test_content_hash_ignores_statistics() -> None:
 # --- Archive worker ---------------------------------------------------------------
 
 
+def _adapters(fetcher: FakeFetcher) -> dict:
+    return {"marktplaats": MarktplaatsAdapter(MarktplaatsClient(fetch=fetcher))}
+
+
 def _create_search(fetcher: FakeFetcher) -> int:
     with get_session_factory()() as session:
         return create_search(
             session,
-            MarktplaatsClient(fetch=fetcher),
+            _adapters(fetcher),
             owner_id="local",
             name="Golf",
-            url="https://www.marktplaats.nl/l/auto-s/volkswagen/",
+            filters=SearchFilters(make="Volkswagen", model="Golf"),
+            platforms=["marktplaats"],
             exclude_keywords=[],
             seller_type="all",
         ).id
@@ -188,14 +200,14 @@ def _create_search(fetcher: FakeFetcher) -> int:
 def _check_search(fetcher: FakeFetcher, settings, payload) -> None:
     fetcher.payloads.append(payload)
     with get_session_factory()() as session:
-        session.query(MarketplaceSearch).update(
-            {MarketplaceSearch.next_check_at: datetime.now(UTC) - timedelta(seconds=1)}
+        session.query(MarketplaceSearchSource).update(
+            {MarketplaceSearchSource.next_check_at: datetime.now(UTC) - timedelta(seconds=1)}
         )
         session.commit()
         run_due_marketplace_searches(
             session,
             settings,
-            client=MarktplaatsClient(fetch=fetcher),
+            adapters=_adapters(fetcher),
             notifier=CollectingNotifier(),
         )
 

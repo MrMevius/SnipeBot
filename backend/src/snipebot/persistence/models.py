@@ -199,12 +199,18 @@ class MarketplaceSearch(Base):
     owner_id: Mapped[str] = mapped_column(
         String(64), nullable=False, default="local", index=True
     )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # SnipeBot's own filters (make, model, ranges). NULL for searches created
+    # from a pasted Marktplaats URL; those keep their query in their source.
+    filters_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Legacy single-platform columns, superseded by ``sources``. Kept so that
+    # existing rows and older code stay readable; new code does not use them
+    # except ``description_json``.
     marketplace: Mapped[str] = mapped_column(
         String(32), nullable=False, default="marktplaats"
     )
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    source_url: Mapped[str] = mapped_column(Text, nullable=False)
-    query_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    query_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     description_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     exclude_keywords_json: Mapped[str] = mapped_column(
         Text, nullable=False, default="[]"
@@ -241,12 +247,58 @@ class MarketplaceSearch(Base):
         onupdate=func.now(),
     )
 
+    sources: Mapped[list["MarketplaceSearchSource"]] = relationship(
+        back_populates="search",
+        cascade="all, delete-orphan",
+        order_by="MarketplaceSearchSource.id",
+    )
     listings: Mapped[list["MarketplaceListing"]] = relationship(
         back_populates="search", cascade="all, delete-orphan"
     )
     alert_events: Mapped[list["MarketplaceAlertEvent"]] = relationship(
         back_populates="search", cascade="all, delete-orphan"
     )
+
+
+class MarketplaceSearchSource(Base):
+    """One platform searched by a saved search, with its own check state."""
+
+    __tablename__ = "marketplace_search_sources"
+    __table_args__ = (
+        UniqueConstraint("search_id", "marketplace", name="uq_marketplace_search_source"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    search_id: Mapped[int] = mapped_column(
+        ForeignKey("marketplace_searches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    marketplace: Mapped[str] = mapped_column(String(32), nullable=False)
+    query_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # Filter keys the platform cannot apply; SnipeBot checks them itself.
+    post_filters_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    baseline_done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Highest numeric listing id seen (Marktplaats only); see marketplace_searches.
+    id_watermark: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    last_total_count: Mapped[int | None] = mapped_column(nullable=True)
+    last_fetched_count: Mapped[int | None] = mapped_column(nullable=True)
+    last_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_check_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    last_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    last_error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    consecutive_failure_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    check_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    search: Mapped[MarketplaceSearch] = relationship(back_populates="sources")
 
 
 class MarketplaceListing(Base):
@@ -261,11 +313,18 @@ class MarketplaceListing(Base):
         nullable=False,
         index=True,
     )
+    marketplace: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="marktplaats", server_default="marktplaats"
+    )
     item_id: Mapped[str] = mapped_column(String(64), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     price_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Post-filter keys whose value the listing does not state.
+    unverified_filters_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
     first_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     current_price: Mapped[Decimal | None] = mapped_column(
         Numeric(12, 2), nullable=True

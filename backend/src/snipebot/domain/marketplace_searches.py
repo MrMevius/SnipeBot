@@ -1,9 +1,13 @@
 """Saved marketplace searches: detect new listings and price drops.
 
-Each check fetches the newest listings for a saved Marktplaats search. The
-first successful check records the current listings silently (baseline).
-Later checks notify for listings that are genuinely new and for price drops on
-known listings.
+A search holds SnipeBot's own filters (make, model, ranges) and searches one or
+more platforms; each platform is a ``MarketplaceSearchSource`` with its own
+query and check state. Searches created from a pasted Marktplaats URL have no
+filters and a single Marktplaats source with the resolved query.
+
+Each check fetches the newest listings of one source. The first successful
+check records the current listings silently (baseline). Later checks notify
+for listings that are genuinely new and for price drops on known listings.
 
 Telegram alerts are limited by the search's price ceiling (``alert_max_price``):
 new listings and price drops alert only when the price is at or below it, and a
@@ -11,7 +15,7 @@ search without a ceiling sends no alerts. All listings are still recorded.
 
 Marktplaats re-lists paid "Dagtopper" ads at the top every day, so an unseen
 listing is not necessarily a new one. Listing ids increase over time: an unseen
-listing counts as new when its id is above the highest id known for the search,
+listing counts as new when its id is above the highest id known for the source,
 or when the previous check covered the complete result set (then any unseen
 listing has just entered the search, e.g. after a price cut).
 """
@@ -21,26 +25,42 @@ from __future__ import annotations
 import json
 import logging
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
-from snipebot.adapters.marketplaces.marktplaats import (
-    SELLER_TYPES,
+from snipebot.adapters.marketplaces.base import (
     Listing,
-    MarktplaatsClient,
-    MarktplaatsError,
-    SearchQuery,
-    apply_seller_type,
-    describe_query,
+    MarketplaceError,
+    PlatformAdapter,
+    PlatformQuery,
+    SearchFilters,
+    find_option,
+    normalize_label,
+)
+from snipebot.adapters.marketplaces.marktplaats import SELLER_TYPES
+from snipebot.adapters.marketplaces.platforms import (
+    PLATFORM_LABELS,
+    get_adapters,
+    platform_label,
 )
 from snipebot.core.config import Settings
 from snipebot.core.metrics import metrics
+from snipebot.domain.marketplace_archive import (
+    MARKETPLACE as ARCHIVE_MARKETPLACE,
+)
 from snipebot.domain.marketplace_archive import mark_listings_missing, observe_listings
 from snipebot.domain.price_checks import resolve_notification_settings
+from snipebot.domain.search_filters import (
+    FILTER_LABELS,
+    check_listing,
+    describe_filters,
+    validate_filters,
+)
 from snipebot.notifications.factory import build_notifier
 from snipebot.notifications.models import NotificationMessage
 from snipebot.persistence.models import (
@@ -48,15 +68,19 @@ from snipebot.persistence.models import (
     MarketplaceListing,
     MarketplaceListingPrice,
     MarketplaceSearch,
+    MarketplaceSearchSource,
 )
 
 logger = logging.getLogger(__name__)
+
+Adapters = dict[str, PlatformAdapter]
 
 MAX_KEYWORDS = 50
 _UNSET = object()
 MAX_ALERTS_PER_CHECK = 10
 NEW_LISTING_WINDOW = timedelta(hours=48)
 DUE_BATCH_SIZE = 10
+PREVIEW_SAMPLE_SIZE = 5
 
 _SELLER_LABELS = {"private": "Particulier", "business": "Bedrijf"}
 _PRICE_TYPE_LABELS = {
@@ -73,12 +97,38 @@ _PRICE_TYPE_LABELS = {
 
 
 @dataclass(slots=True)
-class SearchPreview:
-    query: SearchQuery
-    description: list[str]
-    warnings: list[str]
-    total_count: int
+class MergedOption:
+    """A make or model, with the platforms that know it."""
+
+    label: str
+    platforms: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class PlatformPreview:
+    marketplace: str
+    total_count: int | None
     sample: list[Listing]
+    post_filters: list[str]
+    error: str | None = None
+
+
+@dataclass(slots=True)
+class SearchPreview:
+    description: list[str]
+    platforms: list[PlatformPreview]
+
+
+@dataclass(slots=True)
+class SearchStatus:
+    """Check state of a search, combined over its sources."""
+
+    baseline_done: bool
+    last_checked_at: datetime | None
+    next_check_at: datetime | None
+    last_status: str
+    last_error_message: str | None
+    last_total_count: int | None
 
 
 @dataclass(slots=True)
@@ -87,12 +137,46 @@ class _AlertIntent:
     row: MarketplaceListing
     listing: Listing
     old_price: Decimal | None = None
+    unknown_filters: list[str] = field(default_factory=list)
 
     @property
     def dedup_key(self) -> str:
         if self.kind == "price_drop":
             return f"price_drop|old={self.old_price:.2f}|new={self.listing.price:.2f}"
         return "new_listing"
+
+
+# --- Makes and models --------------------------------------------------------
+
+
+def list_makes(adapters: Adapters) -> tuple[list[MergedOption], list[str]]:
+    """Makes of all platforms merged by name; warnings name unreachable platforms."""
+    merged: dict[str, MergedOption] = {}
+    warnings: list[str] = []
+    for key, adapter in _ordered(adapters):
+        try:
+            options = adapter.makes()
+        except MarketplaceError as exc:
+            warnings.append(f"{adapter.label}: {exc}")
+            continue
+        for option in options:
+            _merge(merged, option.label, key)
+    return sorted(merged.values(), key=lambda option: option.label.lower()), warnings
+
+
+def list_models(adapters: Adapters, make: str) -> tuple[list[MergedOption], list[str]]:
+    merged: dict[str, MergedOption] = {}
+    warnings: list[str] = []
+    for key, adapter in _ordered(adapters):
+        try:
+            make_option = find_option(adapter.makes(), make)
+            options = adapter.models(make_option) if make_option is not None else []
+        except MarketplaceError as exc:
+            warnings.append(f"{adapter.label}: {exc}")
+            continue
+        for option in options:
+            _merge(merged, option.label, key)
+    return sorted(merged.values(), key=lambda option: option.label.lower()), warnings
 
 
 # --- Service functions used by the API -------------------------------------
@@ -110,31 +194,48 @@ def normalize_keywords(values: list[str] | None) -> list[str]:
 
 
 def preview_search(
-    client: MarktplaatsClient, *, url: str, seller_type: str = "all"
+    adapters: Adapters,
+    *,
+    filters: SearchFilters,
+    platforms: list[str],
+    seller_type: str = "all",
+    exclude_keywords: list[str] | None = None,
 ) -> SearchPreview:
-    if seller_type not in SELLER_TYPES:
-        raise ValueError(f"Unknown seller type: {seller_type}")
-    resolved = client.resolve(url)
-    page = client.search(resolved.query, limit=5)
-    query = apply_seller_type(resolved.query, seller_type, page.facets)
-    if query.attribute_ids != resolved.query.attribute_ids:
-        page = client.search(query, limit=5)
-    return SearchPreview(
-        query=query,
-        description=describe_query(query, page.facets, resolved.category_names),
-        warnings=resolved.warnings,
-        total_count=page.total_count,
-        sample=page.listings[:5],
-    )
+    filters = validate_filters(filters)
+    platforms = _validate_platforms(adapters, platforms)
+    _validate_seller_type(seller_type)
+    keywords = normalize_keywords(exclude_keywords)
+    results: list[PlatformPreview] = []
+    for key in platforms:
+        adapter = adapters[key]
+        try:
+            built = adapter.build_query(filters, seller_type)
+            page = adapter.search(built.query, limit=20)
+        except MarketplaceError as exc:
+            results.append(PlatformPreview(key, None, [], [], str(exc)))
+            continue
+        sample = [
+            listing
+            for listing in page.listings
+            if not _is_excluded(listing, keywords)
+            and check_listing(filters, listing, built.post_filters)[0]
+        ]
+        results.append(
+            PlatformPreview(
+                key, page.total_count, sample[:PREVIEW_SAMPLE_SIZE], built.post_filters
+            )
+        )
+    return SearchPreview(description=describe_filters(filters, seller_type), platforms=results)
 
 
 def create_search(
     db_session: Session,
-    client: MarktplaatsClient,
+    adapters: Adapters,
     *,
     owner_id: str,
     name: str,
-    url: str,
+    filters: SearchFilters,
+    platforms: list[str],
     exclude_keywords: list[str] | None,
     seller_type: str,
     alert_max_price: Decimal | None = None,
@@ -142,39 +243,45 @@ def create_search(
     clean_name = name.strip()
     if not clean_name:
         raise ValueError("Name is required")
+    filters = validate_filters(filters)
+    platforms = _validate_platforms(adapters, platforms)
+    _validate_seller_type(seller_type)
     keywords = normalize_keywords(exclude_keywords)
-    preview = preview_search(client, url=url, seller_type=seller_type)
+    queries = _build_queries(adapters, filters, platforms, seller_type)
 
+    now = datetime.now(UTC)
     search = MarketplaceSearch(
         owner_id=owner_id,
-        marketplace="marktplaats",
+        marketplace=platforms[0],
         name=clean_name[:255],
-        source_url=url.strip(),
-        query_json=json.dumps(preview.query.to_dict()),
-        description_json=json.dumps(preview.description),
+        source_url="",
+        query_json="{}",
+        filters_json=json.dumps(filters.to_dict()),
+        description_json=json.dumps(describe_filters(filters, seller_type)),
         exclude_keywords_json=json.dumps(keywords),
         seller_type=seller_type,
         alert_max_price=_validate_ceiling(alert_max_price),
         active=True,
         baseline_done=False,
         last_status="pending",
-        next_check_at=datetime.now(UTC),
     )
+    for key, built in queries.items():
+        search.sources.append(_new_source(key, built, now))
     db_session.add(search)
     db_session.commit()
     db_session.refresh(search)
     logger.info(
-        "marketplace_search.created search_id=%s owner_id=%s total=%s",
+        "marketplace_search.created search_id=%s owner_id=%s platforms=%s",
         search.id,
         owner_id,
-        preview.total_count,
+        ",".join(platforms),
     )
     return search
 
 
 def update_search(
     db_session: Session,
-    client: MarktplaatsClient,
+    adapters: Adapters,
     search: MarketplaceSearch,
     *,
     name: str | None = None,
@@ -182,8 +289,10 @@ def update_search(
     seller_type: str | None = None,
     active: bool | None = None,
     alert_max_price: Decimal | None | object = _UNSET,
+    filters: SearchFilters | None = None,
+    platforms: list[str] | None = None,
 ) -> MarketplaceSearch:
-    filters_changed = False
+    now = datetime.now(UTC)
 
     if alert_max_price is not _UNSET:
         # Only affects which future events alert; no new baseline needed.
@@ -195,32 +304,45 @@ def update_search(
             raise ValueError("Name is required")
         search.name = clean_name[:255]
 
+    keywords_changed = False
     if exclude_keywords is not None:
         keywords = normalize_keywords(exclude_keywords)
         if keywords != get_exclude_keywords(search):
             search.exclude_keywords_json = json.dumps(keywords)
-            filters_changed = True
+            keywords_changed = True
 
-    if seller_type is not None and seller_type != search.seller_type:
-        if seller_type not in SELLER_TYPES:
-            raise ValueError(f"Unknown seller type: {seller_type}")
-        preview = preview_search(client, url=search.source_url, seller_type=seller_type)
-        search.query_json = json.dumps(preview.query.to_dict())
-        search.description_json = json.dumps(preview.description)
-        search.seller_type = seller_type
-        filters_changed = True
+    seller_changed = seller_type is not None and seller_type != search.seller_type
+    if seller_changed:
+        _validate_seller_type(seller_type)
+    if filters is not None or platforms is not None or seller_changed:
+        current = get_search_filters(search)
+        if filters is None and current is None:
+            raise ValueError("Choose a make and a model to change this search")
+        new_filters = validate_filters(filters) if filters is not None else current
+        new_platforms = _validate_platforms(
+            adapters,
+            platforms if platforms is not None else [s.marketplace for s in search.sources],
+        )
+        new_seller = seller_type if seller_type is not None else search.seller_type
+        queries = _build_queries(adapters, new_filters, new_platforms, new_seller)
+        _sync_sources(db_session, search, queries, now)
+        search.filters_json = json.dumps(new_filters.to_dict())
+        search.description_json = json.dumps(describe_filters(new_filters, new_seller))
+        search.seller_type = new_seller
+        search.marketplace = new_platforms[0]
+
+    if keywords_changed:
+        # Changed filters change the result set; record it silently again so
+        # listings that now match are not reported as new.
+        for source in search.sources:
+            _restart_baseline(source, now)
 
     if active is not None and active != search.active:
         search.active = active
         if active:
-            search.next_check_at = datetime.now(UTC)
-            search.consecutive_failure_count = 0
-
-    if filters_changed:
-        # Changed filters change the result set; record it silently again so
-        # listings that now match are not reported as new.
-        search.baseline_done = False
-        search.next_check_at = datetime.now(UTC)
+            for source in search.sources:
+                source.next_check_at = now
+                source.consecutive_failure_count = 0
 
     db_session.commit()
     db_session.refresh(search)
@@ -255,10 +377,38 @@ def delete_search(db_session: Session, search: MarketplaceSearch) -> None:
 def trigger_search_check_now(
     db_session: Session, search: MarketplaceSearch
 ) -> MarketplaceSearch:
-    search.next_check_at = datetime.now(UTC)
+    now = datetime.now(UTC)
+    for source in search.sources:
+        source.next_check_at = now
     db_session.commit()
     db_session.refresh(search)
     return search
+
+
+def search_status(search: MarketplaceSearch) -> SearchStatus:
+    sources = list(search.sources)
+    failing = [source for source in sources if source.last_status not in {"ok", "pending"}]
+    if failing:
+        status = failing[0].last_status
+        message = "; ".join(
+            f"{platform_label(source.marketplace)}: {source.last_error_message or source.last_status}"
+            for source in failing
+        )
+    elif sources and all(source.last_status == "ok" for source in sources):
+        status, message = "ok", None
+    else:
+        status, message = "pending", None
+    checked = [source.last_checked_at for source in sources if source.last_checked_at]
+    scheduled = [source.next_check_at for source in sources if source.next_check_at]
+    totals = [source.last_total_count for source in sources if source.last_total_count is not None]
+    return SearchStatus(
+        baseline_done=bool(sources) and all(source.baseline_done for source in sources),
+        last_checked_at=max(checked, key=_aware) if checked else None,
+        next_check_at=min(scheduled, key=_aware) if scheduled else None,
+        last_status=status,
+        last_error_message=message,
+        last_total_count=sum(totals) if totals else None,
+    )
 
 
 def list_search_listings(
@@ -314,8 +464,10 @@ def is_listing_new(listing: MarketplaceListing, now: datetime | None = None) -> 
     return _is_new(listing.from_baseline, listing.first_seen_at, now or datetime.now(UTC))
 
 
-def get_search_query(search: MarketplaceSearch) -> SearchQuery:
-    return SearchQuery.from_dict(json.loads(search.query_json))
+def get_search_filters(search: MarketplaceSearch) -> SearchFilters | None:
+    if not search.filters_json:
+        return None
+    return SearchFilters.from_dict(json.loads(search.filters_json))
 
 
 def get_search_description(search: MarketplaceSearch) -> list[str]:
@@ -326,6 +478,10 @@ def get_exclude_keywords(search: MarketplaceSearch) -> list[str]:
     return list(json.loads(search.exclude_keywords_json or "[]"))
 
 
+def get_post_filters(source: MarketplaceSearchSource) -> list[str]:
+    return list(json.loads(source.post_filters_json or "[]"))
+
+
 # --- Worker ------------------------------------------------------------------
 
 
@@ -333,25 +489,26 @@ def run_due_marketplace_searches(
     db_session: Session,
     settings: Settings,
     *,
-    client: MarktplaatsClient | None = None,
+    adapters: Adapters | None = None,
     notifier=None,
 ) -> int:
     now = datetime.now(UTC)
-    searches = list(
+    sources = list(
         db_session.scalars(
-            select(MarketplaceSearch)
+            select(MarketplaceSearchSource)
+            .join(MarketplaceSearch, MarketplaceSearch.id == MarketplaceSearchSource.search_id)
             .where(
                 MarketplaceSearch.active.is_(True),
                 or_(
-                    MarketplaceSearch.next_check_at.is_(None),
-                    MarketplaceSearch.next_check_at <= now,
+                    MarketplaceSearchSource.next_check_at.is_(None),
+                    MarketplaceSearchSource.next_check_at <= now,
                 ),
             )
-            .order_by(MarketplaceSearch.next_check_at.asc().nullsfirst())
+            .order_by(MarketplaceSearchSource.next_check_at.asc().nullsfirst())
             .limit(DUE_BATCH_SIZE)
         ).all()
     )
-    if not searches:
+    if not sources:
         return 0
 
     (
@@ -369,18 +526,21 @@ def run_due_marketplace_searches(
             telegram_bot_token=telegram_bot_token,
             telegram_chat_id=telegram_chat_id,
         )
-    client = client or MarktplaatsClient()
+    adapters = adapters if adapters is not None else get_adapters()
 
     processed = 0
-    for search in searches:
+    for source in sources:
         processed += 1
-        search_id = search.id
+        source_id = source.id
         try:
-            check_search(
+            adapter = adapters.get(source.marketplace)
+            if adapter is None:
+                raise MarketplaceError("unsupported", f"Unknown platform {source.marketplace}")
+            check_source(
                 db_session,
-                search,
+                source,
                 settings,
-                client=client,
+                adapter=adapter,
                 notifier=notifier,
                 alerts_enabled=alerts_enabled,
             )
@@ -389,47 +549,57 @@ def run_due_marketplace_searches(
             db_session.rollback()
             metrics.inc("marketplace.search_unhandled_error")
             logger.exception(
-                "marketplace_search.unhandled_error search_id=%s reason=%s",
-                search_id,
+                "marketplace_search.unhandled_error source_id=%s reason=%s",
+                source_id,
                 exc,
             )
-            failed = db_session.get(MarketplaceSearch, search_id)
+            failed = db_session.get(MarketplaceSearchSource, source_id)
             if failed is not None:
-                _record_failure(failed, "error", str(exc), datetime.now(UTC), settings)
+                kind = exc.kind if isinstance(exc, MarketplaceError) else "error"
+                _record_failure(failed, kind, str(exc), datetime.now(UTC), settings)
                 db_session.commit()
     return processed
 
 
-def check_search(
+def check_source(
     db_session: Session,
-    search: MarketplaceSearch,
+    source: MarketplaceSearchSource,
     settings: Settings,
     *,
-    client: MarktplaatsClient,
+    adapter: PlatformAdapter,
     notifier,
     alerts_enabled: bool,
 ) -> None:
+    search = source.search
     now = datetime.now(UTC)
-    search.last_checked_at = now
-    search.check_count += 1
+    source.last_checked_at = now
+    source.check_count += 1
 
     try:
-        page = client.search(get_search_query(search))
-    except MarktplaatsError as exc:
-        _record_failure(search, exc.kind, str(exc), now, settings)
+        page = adapter.search(json.loads(source.query_json))
+    except MarketplaceError as exc:
+        _record_failure(source, exc.kind, str(exc), now, settings)
         return
 
-    baseline = not search.baseline_done
-    previous_full_coverage = (
-        search.last_total_count is not None
-        and search.last_fetched_count is not None
-        and search.last_total_count <= search.last_fetched_count
-    )
-    watermark = search.id_watermark
+    baseline = not source.baseline_done
+    previous_full_coverage = source.last_complete
+    watermark = source.id_watermark
     keywords = get_exclude_keywords(search)
+    filters = get_search_filters(search)
+    post_filters = get_post_filters(source) if filters is not None else []
 
     page_ids = {listing.item_id for listing in page.listings}
-    matching = [listing for listing in page.listings if not _is_excluded(listing, keywords)]
+    matching: list[Listing] = []
+    unknown_by_id: dict[str, list[str]] = {}
+    for listing in page.listings:
+        if _is_excluded(listing, keywords):
+            continue
+        if post_filters:
+            matches, unknown = check_listing(filters, listing, post_filters)
+            if not matches:
+                continue
+            unknown_by_id[listing.item_id] = unknown
+        matching.append(listing)
     known = {
         row.item_id: row
         for row in db_session.scalars(
@@ -442,9 +612,10 @@ def check_search(
 
     intents: list[_AlertIntent] = []
     for listing in matching:
+        unknown = unknown_by_id.get(listing.item_id, [])
         row = known.get(listing.item_id)
         if row is None:
-            row = _create_listing_row(db_session, search, listing, now, baseline)
+            row = _create_listing_row(db_session, search, listing, now, baseline, unknown)
             if baseline:
                 continue
             if not _counts_as_new(listing, watermark, previous_full_coverage):
@@ -454,11 +625,15 @@ def check_search(
                     listing.item_id,
                 )
             elif _within_ceiling(search, listing.price):
-                intents.append(_AlertIntent(kind="new_listing", row=row, listing=listing))
+                intents.append(
+                    _AlertIntent(
+                        kind="new_listing", row=row, listing=listing, unknown_filters=unknown
+                    )
+                )
             continue
 
         old_price = row.current_price
-        _update_listing_row(row, listing, now)
+        _update_listing_row(row, listing, now, unknown)
         if (
             listing.price is not None
             and old_price is not None
@@ -466,38 +641,47 @@ def check_search(
             and _within_ceiling(search, listing.price)
         ):
             intents.append(
-                _AlertIntent(kind="price_drop", row=row, listing=listing, old_price=old_price)
+                _AlertIntent(
+                    kind="price_drop",
+                    row=row,
+                    listing=listing,
+                    old_price=old_price,
+                    unknown_filters=unknown,
+                )
             )
 
-    if settings.marketplace_archive_enabled:
+    archive = settings.marketplace_archive_enabled and source.marketplace == ARCHIVE_MARKETPLACE
+    if archive:
         observe_listings(db_session, search, matching, now)
 
-    if page.total_count <= len(page.listings):
+    if page.complete:
         # The page holds the complete result set, so anything missing is gone.
         missing: list[str] = []
         for row in db_session.scalars(
             select(MarketplaceListing).where(
                 MarketplaceListing.search_id == search.id,
+                MarketplaceListing.marketplace == source.marketplace,
                 MarketplaceListing.gone_at.is_(None),
             )
         ).all():
             if row.item_id not in page_ids:
                 row.gone_at = now
                 missing.append(row.item_id)
-        if settings.marketplace_archive_enabled:
+        if archive:
             mark_listings_missing(db_session, missing, now)
 
     ids = [value for listing in page.listings if (value := listing.numeric_id) is not None]
     if ids:
-        search.id_watermark = max([*ids, watermark or 0])
-    search.baseline_done = True
-    search.last_total_count = page.total_count
-    search.last_fetched_count = len(page.listings)
-    search.last_status = "ok"
-    search.last_error_message = None
-    search.consecutive_failure_count = 0
+        source.id_watermark = max([*ids, watermark or 0])
+    source.baseline_done = True
+    source.last_total_count = page.total_count
+    source.last_fetched_count = len(page.listings)
+    source.last_complete = page.complete
+    source.last_status = "ok"
+    source.last_error_message = None
+    source.consecutive_failure_count = 0
     jitter = max(0, settings.marketplace_check_jitter_seconds)
-    search.next_check_at = now + timedelta(
+    source.next_check_at = now + timedelta(
         seconds=max(60, settings.marketplace_check_interval_seconds)
         + random.randint(-jitter, jitter)
     )
@@ -505,8 +689,10 @@ def check_search(
 
     metrics.inc("marketplace.search_checked")
     logger.info(
-        "marketplace_search.ok search_id=%s baseline=%s total=%s fetched=%s matching=%s alerts=%s",
+        "marketplace_search.ok search_id=%s platform=%s baseline=%s total=%s fetched=%s "
+        "matching=%s alerts=%s",
         search.id,
+        source.marketplace,
         baseline,
         page.total_count,
         len(page.listings),
@@ -516,6 +702,114 @@ def check_search(
 
     if intents and alerts_enabled:
         _dispatch_alerts(db_session, search, intents, notifier, now)
+
+
+def _ordered(adapters: Adapters) -> list[tuple[str, PlatformAdapter]]:
+    order = list(PLATFORM_LABELS)
+    return sorted(
+        adapters.items(),
+        key=lambda item: order.index(item[0]) if item[0] in order else len(order),
+    )
+
+
+def _merge(merged: dict[str, MergedOption], label: str, platform: str) -> None:
+    option = merged.setdefault(normalize_label(label), MergedOption(label=label))
+    if platform not in option.platforms:
+        option.platforms.append(platform)
+
+
+def _validate_platforms(adapters: Adapters, platforms: list[str]) -> list[str]:
+    result: list[str] = []
+    for key in platforms:
+        if key not in adapters:
+            raise ValueError(f"Unknown platform: {key}")
+        if key not in result:
+            result.append(key)
+    if not result:
+        raise ValueError("Choose at least one platform")
+    order = [key for key, _ in _ordered(adapters)]
+    return sorted(result, key=order.index)
+
+
+def _validate_seller_type(seller_type: str | None) -> None:
+    if seller_type not in SELLER_TYPES:
+        raise ValueError(f"Unknown seller type: {seller_type}")
+
+
+def _build_queries(
+    adapters: Adapters, filters: SearchFilters, platforms: list[str], seller_type: str
+) -> dict[str, PlatformQuery]:
+    return {key: adapters[key].build_query(filters, seller_type) for key in platforms}
+
+
+def _new_source(key: str, built: PlatformQuery, now: datetime) -> MarketplaceSearchSource:
+    return MarketplaceSearchSource(
+        marketplace=key,
+        query_json=json.dumps(built.query),
+        post_filters_json=json.dumps(built.post_filters),
+        baseline_done=False,
+        last_complete=False,
+        last_status="pending",
+        consecutive_failure_count=0,
+        check_count=0,
+        next_check_at=now,
+    )
+
+
+def _sync_sources(
+    db_session: Session,
+    search: MarketplaceSearch,
+    queries: dict[str, PlatformQuery],
+    now: datetime,
+) -> None:
+    """Add, update and remove sources; only changed queries start a new baseline."""
+    existing = {source.marketplace: source for source in search.sources}
+    for key, source in existing.items():
+        if key not in queries:
+            search.sources.remove(source)
+            _delete_platform_listings(db_session, search, key)
+    for key, built in queries.items():
+        source = existing.get(key)
+        if source is None:
+            search.sources.append(_new_source(key, built, now))
+            continue
+        if _canonical(json.loads(source.query_json)) == _canonical(built.query) and sorted(
+            get_post_filters(source)
+        ) == sorted(built.post_filters):
+            continue
+        source.query_json = json.dumps(built.query)
+        source.post_filters_json = json.dumps(built.post_filters)
+        _restart_baseline(source, now)
+
+
+def _restart_baseline(source: MarketplaceSearchSource, now: datetime) -> None:
+    source.baseline_done = False
+    source.last_complete = False
+    source.next_check_at = now
+
+
+def _delete_platform_listings(db_session: Session, search: MarketplaceSearch, key: str) -> None:
+    rows = db_session.scalars(
+        select(MarketplaceListing).where(
+            MarketplaceListing.search_id == search.id, MarketplaceListing.marketplace == key
+        )
+    ).all()
+    ids = [row.id for row in rows]
+    if ids:
+        db_session.execute(
+            delete(MarketplaceAlertEvent).where(MarketplaceAlertEvent.listing_id.in_(ids))
+        )
+    for row in rows:
+        db_session.delete(row)
+
+
+def _canonical(value: Any) -> Any:
+    """Order-insensitive form of a query, to tell real changes from reordering."""
+    if isinstance(value, dict):
+        return {key: _canonical(item) for key, item in sorted(value.items())}
+    if isinstance(value, list):
+        return sorted((_canonical(item) for item in value), key=lambda item: json.dumps(item))
+    return value
 
 
 def _counts_as_new(
@@ -550,9 +844,11 @@ def _is_excluded(listing: Listing, keywords: list[str]) -> bool:
 def _is_new(from_baseline: bool, first_seen_at: datetime, now: datetime) -> bool:
     if from_baseline:
         return False
-    if first_seen_at.tzinfo is None:
-        first_seen_at = first_seen_at.replace(tzinfo=UTC)
-    return now - first_seen_at <= NEW_LISTING_WINDOW
+    return now - _aware(first_seen_at) <= NEW_LISTING_WINDOW
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _create_listing_row(
@@ -561,9 +857,11 @@ def _create_listing_row(
     listing: Listing,
     now: datetime,
     baseline: bool,
+    unknown_filters: list[str],
 ) -> MarketplaceListing:
     row = MarketplaceListing(
         search_id=search.id,
+        marketplace=listing.marketplace,
         item_id=listing.item_id,
         title=listing.title[:512],
         url=listing.url,
@@ -575,6 +873,7 @@ def _create_listing_row(
         distance_meters=listing.distance_meters,
         seller_type=listing.seller_type or _seller_from_filter(search),
         attributes_json=json.dumps(listing.attributes, ensure_ascii=False),
+        unverified_filters_json=json.dumps(unknown_filters),
         from_baseline=baseline,
         first_seen_at=now,
         last_seen_at=now,
@@ -585,7 +884,9 @@ def _create_listing_row(
     return row
 
 
-def _update_listing_row(row: MarketplaceListing, listing: Listing, now: datetime) -> None:
+def _update_listing_row(
+    row: MarketplaceListing, listing: Listing, now: datetime, unknown_filters: list[str]
+) -> None:
     row.title = listing.title[:512]
     row.url = listing.url
     row.image_url = listing.image_url or row.image_url
@@ -593,6 +894,7 @@ def _update_listing_row(row: MarketplaceListing, listing: Listing, now: datetime
     row.city = listing.city
     row.distance_meters = listing.distance_meters
     row.attributes_json = json.dumps(listing.attributes, ensure_ascii=False)
+    row.unverified_filters_json = json.dumps(unknown_filters)
     row.last_seen_at = now
     row.gone_at = None
     if listing.seller_type:
@@ -607,27 +909,28 @@ def _seller_from_filter(search: MarketplaceSearch) -> str | None:
 
 
 def _record_failure(
-    search: MarketplaceSearch,
+    source: MarketplaceSearchSource,
     kind: str,
     message: str,
     now: datetime,
     settings: Settings,
 ) -> None:
-    search.consecutive_failure_count += 1
+    source.consecutive_failure_count += 1
     backoff = max(1, settings.retry_interval_seconds) * (
         max(1, settings.retry_backoff_multiplier)
-        ** max(search.consecutive_failure_count - 1, 0)
+        ** max(source.consecutive_failure_count - 1, 0)
     )
     backoff = min(backoff, max(1, settings.retry_max_interval_seconds))
-    search.last_status = kind
-    search.last_error_message = message[:512]
-    search.next_check_at = now + timedelta(seconds=backoff)
+    source.last_status = kind
+    source.last_error_message = message[:512]
+    source.next_check_at = now + timedelta(seconds=backoff)
     metrics.inc(f"marketplace.search_failed.{kind}")
     logger.warning(
-        "marketplace_search.failed search_id=%s kind=%s failures=%s reason=%s",
-        search.id,
+        "marketplace_search.failed search_id=%s platform=%s kind=%s failures=%s reason=%s",
+        source.search_id,
+        source.marketplace,
         kind,
-        search.consecutive_failure_count,
+        source.consecutive_failure_count,
         message,
     )
 
@@ -654,8 +957,16 @@ def _dispatch_alerts(
         if already_sent is None:
             pending.append(intent)
 
+    show_platform = len(search.sources) > 1
     for intent in pending[:MAX_ALERTS_PER_CHECK]:
-        message = format_listing_message(search, intent.kind, intent.listing, intent.old_price)
+        message = format_listing_message(
+            search,
+            intent.kind,
+            intent.listing,
+            intent.old_price,
+            show_platform=show_platform,
+            unknown_filters=intent.unknown_filters,
+        )
         result = notifier.send(message)
         if not result.ok and result.error == "notifications_disabled":
             continue
@@ -687,7 +998,7 @@ def _dispatch_alerts(
 
     overflow = len(pending) - MAX_ALERTS_PER_CHECK
     if overflow > 0:
-        # Guard against floods (e.g. after a Marktplaats change); the listings
+        # Guard against floods (e.g. after a platform change); the listings
         # are recorded and visible in the UI.
         notifier.send(
             NotificationMessage(
@@ -705,15 +1016,19 @@ def format_listing_message(
     kind: str,
     listing: Listing,
     old_price: Decimal | None = None,
+    *,
+    show_platform: bool = False,
+    unknown_filters: list[str] | None = None,
 ) -> NotificationMessage:
+    suffix = f" ({platform_label(listing.marketplace)})" if show_platform else ""
     if kind == "price_drop" and old_price is not None and listing.price is not None:
-        title = f"📉 Prijsdaling — {search.name}"
+        title = f"📉 Prijsdaling — {search.name}{suffix}"
         price_line = (
             f"💶 {format_euro(old_price)} → {format_euro(listing.price)}"
             f" (−{format_euro(old_price - listing.price)})"
         )
     else:
-        title = f"🆕 Nieuwe advertentie — {search.name}"
+        title = f"🆕 Nieuwe advertentie — {search.name}{suffix}"
         price_line = f"💶 {_format_listing_price(listing)}"
 
     lines = [listing.title, price_line]
@@ -723,6 +1038,9 @@ def format_listing_message(
     place = _place_line(listing, search)
     if place:
         lines.append(f"📍 {place}")
+    if unknown_filters:
+        labels = ", ".join(FILTER_LABELS[key].lower() for key in unknown_filters)
+        lines.append(f"❔ Niet vermeld: {labels}")
     lines.append(listing.url)
     return NotificationMessage(
         title=title, body="\n".join(lines), photo_url=listing.image_url

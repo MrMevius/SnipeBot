@@ -1,5 +1,8 @@
 """Marktplaats.nl saved-search adapter.
 
+``MarktplaatsAdapter`` builds searches from SnipeBot's own filters. Searches
+created before that were pasted search URLs, resolved as described below.
+
 A pasted search URL has two parts. The path (category, SEO filters, query) is
 resolved by Marktplaats itself: the result page embeds the search request it
 derived from the path. The ``#`` fragment (ranges, postcode, extra attribute
@@ -20,12 +23,33 @@ from urllib.error import HTTPError
 from urllib.parse import unquote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
+from snipebot.adapters.marketplaces.base import (
+    Listing,
+    MarketplaceError,
+    PlatformQuery,
+    SearchFilters,
+    SearchPage,
+    TaxonomyOption,
+    TtlCache,
+    find_option,
+)
+
 BASE_URL = "https://www.marktplaats.nl"
 SEARCH_API_URL = f"{BASE_URL}/lrp/api/search"
 MARKTPLAATS_HOSTS = {"marktplaats.nl", "www.marktplaats.nl"}
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) SnipeBot/0.1"
 PAGE_LIMIT = 100
 SELLER_TYPES = ("all", "private", "business")
+CARS_CATEGORY_ID = 91
+# "Type advertentie: Te koop", selected by default on the Marktplaats site.
+FOR_SALE_ATTRIBUTE_ID = 10882
+_FILTER_RANGES = {
+    "year": "constructionYear",
+    "price": "PriceCents",
+    "mileage": "mileage",
+    "range": "range",
+    "battery": "batteryCapacity",
+}
 
 _ADVERTISER_VALUES = {"private": "Particulier", "business": "Bedrijf"}
 _SELLER_TYPE_BY_ADVERTISER = {value: key for key, value in _ADVERTISER_VALUES.items()}
@@ -33,7 +57,6 @@ _NEXT_DATA = re.compile(
     r"<script\b[^>]*\bid=\"__NEXT_DATA__\"[^>]*>(.*?)</script\s*>", re.DOTALL
 )
 _RANGE_KEY = re.compile(r"^(.+)(From|To)$")
-_ITEM_ID = re.compile(r"^m(\d+)$")
 _IGNORED_FRAGMENT_KEYS = {
     "sortBy",
     "sortOrder",
@@ -46,20 +69,13 @@ _IGNORED_FRAGMENT_KEYS = {
     "traits",
 }
 _RANGE_LABEL_FALLBACKS = {"PriceCents": "Prijs"}
+_NUMBER = re.compile(r"\d+")
 
 Fetcher = Callable[[str, str], str]
 
 
-class MarktplaatsError(Exception):
-    """Raised for invalid search URLs and failed or unparsable responses.
-
-    ``kind`` is one of ``invalid_url``, ``fetch_error``, ``blocked``,
-    ``parse_error`` or ``gone`` (HTTP 410 for a removed listing).
-    """
-
-    def __init__(self, kind: str, message: str) -> None:
-        super().__init__(message)
-        self.kind = kind
+class MarktplaatsError(MarketplaceError):
+    """Marktplaats failure; ``gone`` means HTTP 410 for a removed listing."""
 
 
 @dataclass(slots=True)
@@ -130,33 +146,6 @@ class ResolvedSearch:
     query: SearchQuery
     category_names: list[str]
     warnings: list[str]
-
-
-@dataclass(slots=True)
-class Listing:
-    item_id: str
-    title: str
-    description: str
-    url: str
-    image_url: str | None
-    price: Decimal | None
-    price_type: str | None
-    city: str | None
-    distance_meters: int | None
-    attributes: dict[str, str]
-    seller_type: str | None
-
-    @property
-    def numeric_id(self) -> int | None:
-        match = _ITEM_ID.match(self.item_id)
-        return int(match.group(1)) if match else None
-
-
-@dataclass(slots=True)
-class SearchPage:
-    total_count: int
-    listings: list[Listing]
-    facets: list[dict[str, Any]]
 
 
 def validate_search_url(url: str) -> tuple[str, str]:
@@ -303,10 +292,12 @@ def parse_search_response(payload: dict[str, Any]) -> SearchPage:
         raise MarktplaatsError("parse_error", "Search response has no listings")
     listings = [listing for raw in listings_raw if (listing := parse_listing(raw))]
     facets = payload.get("facets")
+    total_count = int(payload.get("totalResultCount") or 0)
     return SearchPage(
-        total_count=int(payload.get("totalResultCount") or 0),
+        total_count=total_count,
         listings=listings,
         facets=facets if isinstance(facets, list) else [],
+        complete=total_count <= len(listings),
     )
 
 
@@ -342,6 +333,11 @@ def parse_listing(raw: Any) -> Listing | None:
         distance_meters=distance if distance is not None and distance >= 0 else None,
         attributes=attributes,
         seller_type=_SELLER_TYPE_BY_ADVERTISER.get(attributes.get("advertiser", "")),
+        specs={
+            key: number
+            for key, attribute in _FILTER_RANGES.items()
+            if key != "price" and (number := _leading_int(attributes.get(attribute))) is not None
+        },
     )
 
 
@@ -417,6 +413,78 @@ class MarktplaatsClient:
         if not isinstance(payload, dict):
             raise MarktplaatsError("parse_error", "Unexpected search response")
         return parse_search_response(payload)
+
+
+class MarktplaatsAdapter:
+    """``PlatformAdapter`` for cars on Marktplaats (category "Auto's").
+
+    Makes are l2 categories below "Auto's"; models are values of the ``model``
+    attribute of a make. Marktplaats filters every SnipeBot filter itself.
+    """
+
+    key = "marktplaats"
+    label = "Marktplaats"
+
+    def __init__(self, client: MarktplaatsClient | None = None, cache: TtlCache | None = None):
+        self.client = client or MarktplaatsClient()
+        self._cache = cache or TtlCache()
+
+    def makes(self) -> list[TaxonomyOption]:
+        return self._cache.get("makes", self._load_makes)
+
+    def models(self, make: TaxonomyOption) -> list[TaxonomyOption]:
+        facet = _find_facet(self._make_facets(make.id), "model") or {}
+        return [
+            TaxonomyOption(id=str(item["attributeValueId"]), label=str(item["attributeValueLabel"]))
+            for item in facet.get("attributeGroup") or []
+            if item.get("attributeValueId") is not None and item.get("attributeValueLabel")
+        ]
+
+    def build_query(self, filters: SearchFilters, seller_type: str) -> PlatformQuery:
+        make = find_option(self.makes(), filters.make)
+        if make is None:
+            raise MarktplaatsError("unsupported", f"{filters.make} is not available on Marktplaats")
+        model = find_option(self.models(make), filters.model)
+        if model is None:
+            raise MarktplaatsError(
+                "unsupported", f"{filters.make} {filters.model} is not available on Marktplaats"
+            )
+        query = SearchQuery(
+            l1_category_id=CARS_CATEGORY_ID,
+            l2_category_ids=[int(make.id)],
+            attribute_ids=[int(model.id), FOR_SALE_ATTRIBUTE_ID],
+        )
+        for key, attribute in _FILTER_RANGES.items():
+            low, high = filters.bounds(key)
+            if key == "price":
+                low = low * 100 if low is not None else None
+                high = high * 100 if high is not None else None
+            if low is not None or high is not None:
+                query.ranges.append(AttributeRange(key=attribute, low=low, high=high))
+        query = apply_seller_type(query, seller_type, self._make_facets(make.id))
+        return PlatformQuery(query=query.to_dict(), post_filters=[])
+
+    def search(self, query: dict[str, Any], *, limit: int | None = None) -> SearchPage:
+        return self.client.search(SearchQuery.from_dict(query), limit=limit or PAGE_LIMIT)
+
+    def _load_makes(self) -> list[TaxonomyOption]:
+        page = self.client.search(SearchQuery(l1_category_id=CARS_CATEGORY_ID), limit=1)
+        facet = _find_facet(page.facets, "RelevantCategories") or {}
+        makes = [
+            TaxonomyOption(id=str(item["id"]), label=str(item["label"]))
+            for item in facet.get("categories") or []
+            if item.get("parentId") == CARS_CATEGORY_ID and item.get("label")
+        ]
+        if not makes:
+            raise MarktplaatsError("parse_error", "Marktplaats returned no car makes")
+        return makes
+
+    def _make_facets(self, make_id: str) -> list[dict[str, Any]]:
+        def load() -> list[dict[str, Any]]:
+            query = SearchQuery(l1_category_id=CARS_CATEGORY_ID, l2_category_ids=[int(make_id)])
+            return self.client.search(query, limit=1).facets
+
+        return self._cache.get(f"facets:{make_id}", load)
 
 
 def _http_fetch(url: str, accept: str) -> str:
@@ -500,6 +568,11 @@ def _format_range_value(key: str, value: int | None) -> str | None:
 
 def _thousands(value: int) -> str:
     return f"{value:,}".replace(",", ".")
+
+
+def _leading_int(value: str | None) -> int | None:
+    match = _NUMBER.search(value.replace(".", "")) if value else None
+    return int(match.group(0)) if match else None
 
 
 def _as_int(value: Any) -> int | None:

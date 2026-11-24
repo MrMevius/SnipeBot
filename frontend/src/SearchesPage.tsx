@@ -4,19 +4,25 @@ import {
   MarketplaceListing,
   MarketplaceSearch,
   MarketplaceSearchPreview,
+  PlatformInfo,
+  SearchFilters,
   SellerType,
+  TaxonomyOption,
   createMarketplaceSearch,
   deleteMarketplaceSearch,
   fetchMarketplaceListings,
   fetchMarketplaceSearch,
   fetchMarketplaceSearches,
+  fetchSearchMakes,
+  fetchSearchModels,
+  fetchSearchPlatforms,
   patchMarketplaceSearch,
   previewMarketplaceSearch,
   triggerMarketplaceSearchCheckNow,
 } from "./api/client";
 
 const SELLER_LABELS: Record<SellerType, string> = {
-  all: "As in URL (all)",
+  all: "All sellers",
   private: "Private only",
   business: "Business only",
 };
@@ -142,35 +148,299 @@ function SellerSelect({
   );
 }
 
+const FILTER_LABELS: Record<string, string> = {
+  year: "year",
+  price: "price",
+  mileage: "mileage",
+  range: "range",
+  battery: "battery capacity",
+};
+
+type RangeKey =
+  | "year_min"
+  | "year_max"
+  | "price_min"
+  | "price_max"
+  | "mileage_min"
+  | "mileage_max"
+  | "range_min"
+  | "battery_min"
+  | "battery_max";
+
+const RANGE_FIELDS: { label: string; min: RangeKey; max?: RangeKey; placeholder: [string, string] }[] = [
+  { label: "Year", min: "year_min", max: "year_max", placeholder: ["2018", "2024"] },
+  { label: "Price (€)", min: "price_min", max: "price_max", placeholder: ["10.000", "40.000"] },
+  { label: "Mileage (km)", min: "mileage_min", max: "mileage_max", placeholder: ["0", "100.000"] },
+  { label: "Range from (km)", min: "range_min", placeholder: ["600", ""] },
+  { label: "Battery (kWh)", min: "battery_min", max: "battery_max", placeholder: ["50", "60"] },
+];
+
+type FilterForm = {
+  make: string;
+  model: string;
+  platforms: string[];
+  ranges: Record<RangeKey, string>;
+};
+
+const EMPTY_RANGES: Record<RangeKey, string> = {
+  year_min: "",
+  year_max: "",
+  price_min: "",
+  price_max: "",
+  mileage_min: "",
+  mileage_max: "",
+  range_min: "",
+  battery_min: "",
+  battery_max: "",
+};
+
+function emptyFilterForm(): FilterForm {
+  return { make: "", model: "", platforms: [], ranges: { ...EMPTY_RANGES } };
+}
+
+function filterFormFrom(search: MarketplaceSearch): FilterForm {
+  const ranges = { ...EMPTY_RANGES };
+  if (search.filters) {
+    for (const key of Object.keys(EMPTY_RANGES) as RangeKey[]) {
+      const value = search.filters[key];
+      ranges[key] = value === null ? "" : String(value);
+    }
+  }
+  return {
+    make: search.filters?.make ?? "",
+    model: search.filters?.model ?? "",
+    platforms: search.platforms.map((platform) => platform.marketplace),
+    ranges,
+  };
+}
+
+// Whole numbers in Dutch notation ("40.000"); empty means no limit.
+function parseWholeNumber(value: string): number | null {
+  const cleaned = value.replace(/[€\s.]/g, "");
+  if (!cleaned) return null;
+  return /^\d+$/.test(cleaned) ? Number(cleaned) : Number.NaN;
+}
+
+function filtersFromForm(form: FilterForm): SearchFilters | string {
+  if (!form.make || !form.model) return "Choose a make and a model.";
+  const filters: SearchFilters = { make: form.make, model: form.model, ...NULL_RANGES };
+  for (const key of Object.keys(EMPTY_RANGES) as RangeKey[]) {
+    const value = parseWholeNumber(form.ranges[key]);
+    if (Number.isNaN(value)) return "Enter whole numbers in the filter fields, e.g. 40.000.";
+    filters[key] = value;
+  }
+  return filters;
+}
+
+const NULL_RANGES: Record<RangeKey, null> = {
+  year_min: null,
+  year_max: null,
+  price_min: null,
+  price_max: null,
+  mileage_min: null,
+  mileage_max: null,
+  range_min: null,
+  battery_min: null,
+  battery_max: null,
+};
+
+function useTaxonomy(make: string) {
+  const [platforms, setPlatforms] = useState<PlatformInfo[]>([]);
+  const [makes, setMakes] = useState<TaxonomyOption[]>([]);
+  const [models, setModels] = useState<TaxonomyOption[]>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchSearchPlatforms(), fetchSearchMakes()])
+      .then(([platformList, makeOptions]) => {
+        if (cancelled) return;
+        setPlatforms(platformList);
+        setMakes(makeOptions.items);
+        setWarnings(makeOptions.warnings);
+      })
+      .catch((err: Error) => !cancelled && setError(err.message));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setModels([]);
+    if (!make) return undefined;
+    fetchSearchModels(make)
+      .then((options) => !cancelled && setModels(options.items))
+      .catch((err: Error) => !cancelled && setError(err.message));
+    return () => {
+      cancelled = true;
+    };
+  }, [make]);
+
+  return { platforms, makes, models, warnings, error };
+}
+
+function SearchFilterFields({ value, onChange }: { value: FilterForm; onChange: (value: FilterForm) => void }) {
+  const { platforms, makes, models, warnings, error } = useTaxonomy(value.make);
+  const makeOption = makes.find((option) => option.label === value.make);
+  const modelOption = models.find((option) => option.label === value.model);
+  const available = modelOption?.platforms ?? makeOption?.platforms ?? [];
+  // Keep a stored make/model visible while the lists load or when a platform lacks it.
+  const makeLabels = makes.map((option) => option.label);
+  const modelLabels = models.map((option) => option.label);
+  if (value.make && !makeLabels.includes(value.make)) makeLabels.unshift(value.make);
+  if (value.model && !modelLabels.includes(value.model)) modelLabels.unshift(value.model);
+
+  // A newly chosen model starts with every platform that has it.
+  function setModel(model: string) {
+    const option = models.find((item) => item.label === model);
+    onChange({ ...value, model, platforms: option ? [...option.platforms] : [] });
+  }
+
+  return (
+    <>
+      <div className="compact-grid search-form-grid">
+        <label>
+          Make
+          <select
+            value={value.make}
+            required
+            onChange={(event) => onChange({ ...value, make: event.target.value, model: "", platforms: [] })}
+          >
+            <option value="">Choose a make…</option>
+            {makeLabels.map((label) => (
+              <option key={label} value={label}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Model
+          <select value={value.model} required disabled={!value.make} onChange={(event) => setModel(event.target.value)}>
+            <option value="">Choose a model…</option>
+            {modelLabels.map((label) => (
+              <option key={label} value={label}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <fieldset className="platform-choices">
+          <legend>Platforms</legend>
+          {platforms.map((platform) => {
+            const enabled = available.includes(platform.key);
+            return (
+              <label key={platform.key} className="toggle-row" title={enabled ? undefined : `Not on ${platform.label}`}>
+                <input
+                  type="checkbox"
+                  checked={value.platforms.includes(platform.key)}
+                  disabled={!enabled && !value.platforms.includes(platform.key)}
+                  onChange={(event) =>
+                    onChange({
+                      ...value,
+                      platforms: event.target.checked
+                        ? [...value.platforms, platform.key]
+                        : value.platforms.filter((key) => key !== platform.key),
+                    })
+                  }
+                />
+                {platform.label}
+                {value.model && !enabled && <span className="muted"> (not available)</span>}
+              </label>
+            );
+          })}
+        </fieldset>
+      </div>
+      <div className="compact-grid search-range-grid">
+        {RANGE_FIELDS.map((field) => (
+          <fieldset key={field.min} className="range-field">
+            <legend>{field.label}</legend>
+            <input
+              type="text"
+              inputMode="numeric"
+              aria-label={`${field.label} ${field.max ? "from" : ""}`.trim()}
+              placeholder={field.placeholder[0]}
+              value={value.ranges[field.min]}
+              onChange={(event) =>
+                onChange({ ...value, ranges: { ...value.ranges, [field.min]: event.target.value } })
+              }
+            />
+            {field.max && (
+              <>
+                <span className="muted">–</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  aria-label={`${field.label} to`}
+                  placeholder={field.placeholder[1]}
+                  value={value.ranges[field.max]}
+                  onChange={(event) =>
+                    onChange({ ...value, ranges: { ...value.ranges, [field.max as RangeKey]: event.target.value } })
+                  }
+                />
+              </>
+            )}
+          </fieldset>
+        ))}
+      </div>
+      {warnings.map((warning) => (
+        <p key={warning} className="error">
+          {warning}
+        </p>
+      ))}
+      {error && <p className="error">{error}</p>}
+    </>
+  );
+}
+
+function postFilterNote(postFilters: string[]): string | null {
+  if (postFilters.length === 0) return null;
+  return `SnipeBot checks ${postFilters.map((key) => FILTER_LABELS[key] ?? key).join(", ")} itself`;
+}
+
 function SearchPreviewCard({ preview }: { preview: MarketplaceSearchPreview }) {
   return (
     <div className="preview-card" data-testid="search-preview">
-      <strong>{preview.total_count.toLocaleString("nl-NL")} listings match</strong>
       <ul className="search-description">
         {preview.description.map((line) => (
           <li key={line}>{line}</li>
         ))}
       </ul>
-      {preview.warnings.map((warning) => (
-        <p key={warning} className="error">
-          {warning}
-        </p>
+      {preview.platforms.map((platform) => (
+        <div key={platform.marketplace} className="preview-platform" data-testid={`preview-${platform.marketplace}`}>
+          <strong>
+            {platform.label}:{" "}
+            {platform.error
+              ? "not available"
+              : `${(platform.total_count ?? 0).toLocaleString("nl-NL")} listings match`}
+          </strong>
+          {platform.error && <p className="error">{platform.error}</p>}
+          {postFilterNote(platform.post_filters) && (
+            <p className="muted">{postFilterNote(platform.post_filters)}; the count is before that check.</p>
+          )}
+          <div className="search-sample">
+            {platform.sample.map((listing) => (
+              <a key={listing.item_id} href={listing.url} target="_blank" rel="noreferrer">
+                {listing.image_url ? <img src={listing.image_url} alt="" loading="lazy" /> : null}
+                <span>{listing.title}</span>
+                <span className="muted">{formatEuro(listing.price)}</span>
+              </a>
+            ))}
+          </div>
+        </div>
       ))}
-      <div className="search-sample">
-        {preview.sample.map((listing) => (
-          <a key={listing.item_id} href={listing.url} target="_blank" rel="noreferrer">
-            {listing.image_url ? <img src={listing.image_url} alt="" loading="lazy" /> : null}
-            <span>{listing.title}</span>
-            <span className="muted">{formatEuro(listing.price)}</span>
-          </a>
-        ))}
-      </div>
       <p className="muted">
-        Compare the count and filters with Marktplaats before saving. Current listings are
-        recorded silently; only listings that appear later trigger a Telegram alert.
+        Compare the counts with the platforms before saving. Current listings are recorded silently;
+        only listings that appear later trigger a Telegram alert.
       </p>
     </div>
   );
+}
+
+function platformNames(search: MarketplaceSearch): string {
+  return search.platforms.map((platform) => platform.label).join(" + ");
 }
 
 function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) {
@@ -179,7 +449,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
+  const [filterForm, setFilterForm] = useState<FilterForm>(emptyFilterForm);
   const [keywords, setKeywords] = useState("");
   const [sellerType, setSellerType] = useState<SellerType>("all");
   const [ceiling, setCeiling] = useState("");
@@ -202,15 +472,28 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
     void load();
   }, [load]);
 
-  const currentKey = `${url.trim()}|${sellerType}`;
+  const filters = filtersFromForm(filterForm);
+  const currentKey = JSON.stringify([filters, filterForm.platforms, sellerType, keywords]);
   const previewIsCurrent = preview !== null && previewKey === currentKey;
+  const canPreview = typeof filters !== "string" && filterForm.platforms.length > 0;
 
   async function handlePreview() {
+    if (typeof filters === "string") {
+      setError(filters);
+      return;
+    }
     setBusy(true);
     setError(null);
     setFeedback(null);
     try {
-      setPreview(await previewMarketplaceSearch(url.trim(), sellerType));
+      setPreview(
+        await previewMarketplaceSearch({
+          filters,
+          platforms: filterForm.platforms,
+          seller_type: sellerType,
+          exclude_keywords: parseKeywords(keywords),
+        }),
+      );
       setPreviewKey(currentKey);
     } catch (err) {
       setPreview(null);
@@ -222,7 +505,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
 
   async function handleSave(event: FormEvent) {
     event.preventDefault();
-    if (!previewIsCurrent) {
+    if (!previewIsCurrent || typeof filters === "string") {
       await handlePreview();
       return;
     }
@@ -236,14 +519,15 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
     try {
       const created = await createMarketplaceSearch({
         name: name.trim(),
-        url: url.trim(),
+        filters,
+        platforms: filterForm.platforms,
         exclude_keywords: parseKeywords(keywords),
         seller_type: sellerType,
         alert_max_price: alertMaxPrice,
       });
       setFeedback(`Saved search “${created.name}”.`);
       setName("");
-      setUrl("");
+      setFilterForm(emptyFilterForm());
       setKeywords("");
       setSellerType("all");
       setCeiling("");
@@ -271,10 +555,10 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
   return (
     <>
       <section className="panel compact-form">
-        <h1>Marktplaats searches</h1>
+        <h1>Searches</h1>
         <p className="muted">
-          Set up the search on marktplaats.nl (brand, model, year, mileage, price, distance…),
-          then paste the URL of the results page here.
+          Choose a car and filters once; SnipeBot searches every selected platform and alerts on new
+          listings and price drops.
         </p>
         <form onSubmit={handleSave}>
           <div className="compact-grid search-form-grid">
@@ -282,22 +566,15 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
               Name
               <input
                 type="text"
-                placeholder="Golf GTI"
+                placeholder="Model 3 SR"
                 value={name}
                 required
                 onChange={(event) => setName(event.target.value)}
               />
             </label>
-            <label>
-              Search URL
-              <input
-                type="url"
-                placeholder="https://www.marktplaats.nl/l/auto-s/..."
-                value={url}
-                required
-                onChange={(event) => setUrl(event.target.value)}
-              />
-            </label>
+          </div>
+          <SearchFilterFields value={filterForm} onChange={setFilterForm} />
+          <div className="compact-grid search-form-grid">
             <label>
               Exclude words (comma separated)
               <input
@@ -313,7 +590,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
               <button
                 type="button"
                 className="secondary"
-                disabled={busy || !url.trim()}
+                disabled={busy || !canPreview}
                 onClick={() => void handlePreview()}
               >
                 Preview
@@ -328,7 +605,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
           Telegram only alerts for new listings and price drops at or below the price ceiling;
           without a ceiling the search records listings but sends no alerts.
         </p>
-        {busy && <p className="muted">Asking Marktplaats…</p>}
+        {busy && <p className="muted">Asking the platforms…</p>}
         {preview && previewIsCurrent && <SearchPreviewCard preview={preview} />}
         {error && <p className="error">{error}</p>}
         {feedback && <p className="success">{feedback}</p>}
@@ -368,7 +645,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
                       >
                         {search.name}
                       </a>
-                      <div className="compact-cell-sub muted">{SELLER_LABELS[search.seller_type]}</div>
+                      <div className="compact-cell-sub muted">{platformNames(search)}</div>
                       <div className="compact-cell-sub muted">{ceilingLabel(search.alert_max_price)}</div>
                     </td>
                     <td className="muted">{search.description.join(" · ")}</td>
@@ -382,6 +659,9 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
                       {search.cheapest ? (
                         <>
                           <strong>{formatEuro(search.cheapest.price)}</strong>
+                          {search.platforms.length > 1 && (
+                            <span className="muted"> · {platformLabel(search, search.cheapest.marketplace)}</span>
+                          )}
                           <div className="compact-cell-sub search-cheapest-title">
                             {search.cheapest.archive_id ? (
                               <a
@@ -475,6 +755,10 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
   );
 }
 
+function platformLabel(search: MarketplaceSearch, key: string): string {
+  return search.platforms.find((platform) => platform.marketplace === key)?.label ?? key;
+}
+
 function ListingPrice({ listing }: { listing: MarketplaceListing }) {
   const history = listing.price_history.map((point) => point.price);
   const changed =
@@ -510,6 +794,7 @@ function SearchDetail({
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [name, setName] = useState("");
+  const [filterForm, setFilterForm] = useState<FilterForm>(emptyFilterForm);
   const [keywords, setKeywords] = useState("");
   const [sellerType, setSellerType] = useState<SellerType>("all");
   const [ceiling, setCeiling] = useState("");
@@ -526,6 +811,7 @@ function SearchDetail({
       setSearch(searchPayload);
       setListings(listingPayload);
       setName(searchPayload.name);
+      setFilterForm(filterFormFrom(searchPayload));
       setKeywords(searchPayload.exclude_keywords.join(", "));
       setSellerType(searchPayload.seller_type);
       setCeiling(
@@ -550,6 +836,17 @@ function SearchDetail({
       setError("Enter the price ceiling as an amount in euros, e.g. 45.000.");
       return;
     }
+    // A search from a pasted URL keeps its query until a make and model are chosen.
+    const legacy = search?.filters === null && !filterForm.make;
+    const filters = legacy ? null : filtersFromForm(filterForm);
+    if (typeof filters === "string") {
+      setError(filters);
+      return;
+    }
+    if (filters && filterForm.platforms.length === 0) {
+      setError("Choose at least one platform.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -558,6 +855,7 @@ function SearchDetail({
         exclude_keywords: parseKeywords(keywords),
         seller_type: sellerType,
         alert_max_price: alertMaxPrice,
+        ...(filters ? { filters, platforms: filterForm.platforms } : {}),
       });
       setFeedback("Saved.");
       await load();
@@ -575,6 +873,7 @@ function SearchDetail({
   const hasYear = listings.some((listing) => numericAttribute(listing, "constructionYear") !== null);
   const hasMileage = listings.some((listing) => numericAttribute(listing, "mileage") !== null);
   const hasDetails = listings.some((listing) => carDetails(listing.attributes) !== "");
+  const multiPlatform = (search?.platforms.length ?? 0) > 1;
 
   function sortHeader(column: ListingSortColumn, label: string) {
     const active = listingSort.column === column;
@@ -619,13 +918,23 @@ function SearchDetail({
                 <li key={line}>{line}</li>
               ))}
             </ul>
-            <p className="muted">
-              <a href={search.source_url} target="_blank" rel="noreferrer">
-                Open on Marktplaats
-              </a>{" "}
-              · {search.last_total_count ?? "?"} results at last check ({formatDate(search.last_checked_at)})
-              {search.last_error_message ? ` · ${search.last_error_message}` : ""}
-            </p>
+            <ul className="search-sources">
+              {search.platforms.map((platform) => (
+                <li key={platform.marketplace} data-testid={`source-${platform.marketplace}`}>
+                  <strong>{platform.label}</strong>: {platform.last_total_count ?? "?"} results at last check (
+                  {formatDate(platform.last_checked_at)})
+                  {!platform.baseline_done && " · recording listings"}
+                  {platform.last_error_message ? ` · ${platform.last_error_message}` : ""}
+                  {postFilterNote(platform.post_filters) && ` · ${postFilterNote(platform.post_filters)}`}
+                </li>
+              ))}
+            </ul>
+            {search.filters === null && (
+              <p className="muted">
+                This search was created from a Marktplaats URL. Choose a make and model to switch it to
+                filters and add platforms.
+              </p>
+            )}
             <form onSubmit={handleSave}>
               <div className="compact-grid search-form-grid">
                 <label>
@@ -637,6 +946,9 @@ function SearchDetail({
                     onChange={(event) => setName(event.target.value)}
                   />
                 </label>
+              </div>
+              <SearchFilterFields value={filterForm} onChange={setFilterForm} />
+              <div className="compact-grid search-form-grid">
                 <label>
                   Exclude words (comma separated)
                   <input
@@ -653,7 +965,8 @@ function SearchDetail({
               </div>
             </form>
             <p className="muted">
-              Changing the exclude words or seller records the current listings silently again.
+              Changing filters, exclude words or seller records the current listings silently again;
+              a newly added platform starts the same way.
               Telegram alerts only for listings at or below the price ceiling; empty = no alerts.
             </p>
           </>
@@ -688,6 +1001,7 @@ function SearchDetail({
                   {hasYear && sortHeader("year", "Year")}
                   {hasMileage && sortHeader("mileage", "Mileage")}
                   {hasDetails && <th>Details</th>}
+                  {multiPlatform && <th>Platform</th>}
                   {sortHeader("distance", "Location")}
                   {sortHeader("first_seen", "First seen")}
                 </tr>
@@ -726,6 +1040,14 @@ function SearchDetail({
                           )}
                           {listing.is_new && <span className="pill search-new-pill">new</span>}
                           {listing.gone_at && <span className="pill">gone</span>}
+                          {listing.unverified_filters.length > 0 && (
+                            <span
+                              className="pill"
+                              title="The listing does not state this; it is kept until it does."
+                            >
+                              {listing.unverified_filters.map((key) => FILTER_LABELS[key] ?? key).join(", ")} unknown
+                            </span>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -740,6 +1062,7 @@ function SearchDetail({
                       </td>
                     )}
                     {hasDetails && <td>{carDetails(listing.attributes) || "–"}</td>}
+                    {multiPlatform && <td>{search ? platformLabel(search, listing.marketplace) : listing.marketplace}</td>}
                     <td>
                       {listing.city ?? "–"}
                       {listing.distance_km !== null ? ` (${listing.distance_km} km)` : ""}

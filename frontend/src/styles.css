@@ -971,7 +971,50 @@ td {
 }
 
 .search-form-grid {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 0.8fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-bottom: 8px;
+}
+
+.search-range-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  margin-bottom: 8px;
+}
+
+.range-field,
+.platform-choices {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 8px 6px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+}
+
+.range-field legend,
+.platform-choices legend {
+  padding: 0 4px;
+  font-size: 0.85em;
+}
+
+.range-field input {
+  min-width: 0;
+  width: 100%;
+}
+
+.platform-choices {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.search-sources {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.preview-platform + .preview-platform {
+  border-top: 1px solid var(--panel-border);
+  padding-top: 6px;
 }
 
 .search-description {
