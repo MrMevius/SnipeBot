@@ -35,7 +35,7 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from snipebot.adapters.marketplaces import scout24_listing
+from snipebot.adapters.marketplaces import scout24_listing, viabovag_listing
 from snipebot.adapters.marketplaces.platforms import SHARED_LISTING_IDS
 from snipebot.adapters.marketplaces.scout24 import SITES, normalize_plate
 from snipebot.adapters.marketplaces.base import Listing, MarketplaceError
@@ -60,7 +60,7 @@ from snipebot.persistence.models import (
 logger = logging.getLogger(__name__)
 
 # Platforms whose listings are archived.
-ARCHIVE_MARKETPLACES = ("marktplaats", "2dehands", "autoscout24", "autotrack")
+ARCHIVE_MARKETPLACES = ("marktplaats", "2dehands", "autoscout24", "viabovag", "autotrack")
 DUE_BATCH_SIZE = 50
 MAX_FETCH_FAILURES = 5
 IMAGE_DELAY_SECONDS = 0.2
@@ -102,6 +102,9 @@ def build_sources(
             fetch_image=image_fetch,
         ),
     }
+    sources["viabovag"] = ArchiveSource(
+        fetch_detail=viabovag_listing.fetch_listing, fetch_image=viabovag_listing.image_fetch
+    )
     for key, site in SITES.items():
         sources[key] = ArchiveSource(
             fetch_detail=lambda url, site=site: scout24_listing.fetch_listing(url, site),

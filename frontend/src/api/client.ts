@@ -756,6 +756,7 @@ export const PLATFORM_LABELS: Record<string, string> = {
   marktplaats: "Marktplaats",
   "2dehands": "2dehands",
   autoscout24: "AutoScout24",
+  viabovag: "ViaBOVAG",
   autotrack: "AutoTrack",
 };
 

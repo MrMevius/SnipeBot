@@ -344,7 +344,7 @@ def test_duplicates_across_platforms_by_license_plate(settings, tmp_path) -> Non
 def test_platform_registry_offers_scout24_sites() -> None:
     from snipebot.adapters.marketplaces.platforms import get_adapters
 
-    assert list(get_adapters()) == ["marktplaats", "2dehands", "autoscout24", "autotrack"]
+    assert list(get_adapters()) == ["marktplaats", "2dehands", "autoscout24", "viabovag", "autotrack"]
     assert isinstance(get_adapters()["marktplaats"], MarktplaatsAdapter)
     assert issubclass(Scout24Error, MarketplaceError)
 
