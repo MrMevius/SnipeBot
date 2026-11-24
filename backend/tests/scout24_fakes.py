@@ -39,6 +39,7 @@ def search_listing(
     country: str = "NL",
     seller: str = "Dealer",
     site: Scout24Site = AUTOTRACK,
+    distance_km: int | None = None,
 ) -> dict[str, Any]:
     listing_id = uuid(number)
     details = [{"data": "12.345 km", "iconName": "mileage_odometer", "ariaLabel": "Kilometerstand"}]
@@ -58,7 +59,12 @@ def search_listing(
             "fuel": "Elektrisch",
             "jsonLd": {"licensePlate": plate},
         },
-        "location": {"countryCode": country, "zip": "8242 BA", "city": "LELYSTAD"},
+        "location": {
+            "countryCode": country,
+            "zip": "8242 BA",
+            "city": "LELYSTAD",
+            **({"distanceToSearchLocationInKm": distance_km} if distance_km is not None else {}),
+        },
         "seller": {"id": "1", "type": seller, "companyName": "EV Dealer B.V."},
         "tracking": {"firstRegistration": registration, "mileage": "12345", "price": str(price)},
         "vehicleDetails": details,

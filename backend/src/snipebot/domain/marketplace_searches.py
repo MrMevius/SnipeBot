@@ -52,6 +52,7 @@ from snipebot.adapters.marketplaces.platforms import (
     PLATFORM_LABELS,
     SHARED_LISTING_IDS,
     get_adapters,
+    home_location,
     platform_label,
 )
 from snipebot.core.config import Settings
@@ -1118,6 +1119,13 @@ def format_listing_message(
     )
 
 
+def _flag(country: str | None) -> str:
+    """Regional-indicator flag emoji for a two-letter country code."""
+    if not country or len(country) != 2 or not country.isalpha():
+        return ""
+    return "".join(chr(0x1F1E6 + ord(letter) - ord("A")) for letter in country.upper())
+
+
 def format_euro(value: Decimal) -> str:
     whole = int(value)
     cents = int((value - whole) * 100)
@@ -1149,10 +1157,12 @@ def _car_details(attributes: dict[str, str]) -> str:
 def _place_line(listing: Listing, search: MarketplaceSearch) -> str:
     parts: list[str] = []
     if listing.city:
-        if listing.distance_meters is not None:
-            parts.append(f"{listing.city} ({round(listing.distance_meters / 1000)} km)")
-        else:
-            parts.append(listing.city)
+        flag = _flag(listing.attributes.get("country"))
+        parts.append(f"{flag} {listing.city}" if flag else listing.city)
+    if listing.distance_meters is not None:
+        home = home_location()
+        suffix = f" van {home.name}" if home is not None else ""
+        parts.append(f"{round(listing.distance_meters / 1000)} km{suffix}")
     seller = _SELLER_LABELS.get(listing.seller_type or _seller_from_filter(search) or "")
     if seller:
         parts.append(seller)

@@ -375,7 +375,7 @@ def test_autoscout24_searches_nl_be_de_with_private_sellers() -> None:
     foreign, dutch = page.listings
     assert foreign.marketplace == "autoscout24"
     assert foreign.url.startswith("https://www.autoscout24.nl/aanbod/")
-    assert (foreign.city, foreign.seller_type, foreign.attributes["country"]) == ("Lelystad (BE)", "private", "BE")
+    assert (foreign.city, foreign.seller_type, foreign.attributes["country"]) == ("Lelystad", "private", "BE")
     assert dutch.city == "Lelystad"
 
 

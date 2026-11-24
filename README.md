@@ -31,6 +31,8 @@ Platform notes:
 
 Searches created earlier from a pasted Marktplaats URL keep working; choose a make and model on the search page to switch them to filters and add platforms.
 
+Listings show their country as a flag and, when `SNIPEBOT_HOME_NAME`, `SNIPEBOT_HOME_POSTCODE`, `SNIPEBOT_HOME_LATITUDE` and `SNIPEBOT_HOME_LONGITUDE` are set, the straight-line distance from that place (Marktplaats/2dehands from the listing coordinates, AutoScout24 from the site's own distance for the postcode).
+
 Telegram uses the same notification settings as the watchlist (Settings → Telegram).
 
 ### Listing archive

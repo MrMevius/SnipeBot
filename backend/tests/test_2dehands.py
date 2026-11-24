@@ -49,13 +49,16 @@ def test_2dehands_uses_the_marktplaats_api_on_its_own_site() -> None:
     assert ev.post_filters == ["range", "battery"]
     assert [item["key"] for item in ev.query["ranges"]] == ["constructionYear"]
 
-    fetcher.payloads.append(search_payload([listing(100, title="Volkswagen ID.3 Pro 58 kWh")]))
+    fetcher.payloads.append(
+        search_payload([listing(100, title="Volkswagen ID.3 Pro 58 kWh", country_name="België")])
+    )
     page = adapter.search(built.query)
     assert fetcher.requests[-1].startswith("https://www.2dehands.be/lrp/api/search?")
     [car] = page.listings
     assert car.marketplace == "2dehands"
     assert car.url == "https://www.2dehands.be/v/auto-s/volkswagen/m100-volkswagen-golf"
-    assert car.city == "Almelo (BE)"
+    assert car.city == "Almelo"
+    assert car.attributes["country"] == "BE"
     assert car.specs["battery"] == 58
 
 

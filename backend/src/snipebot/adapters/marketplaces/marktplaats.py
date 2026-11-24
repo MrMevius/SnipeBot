@@ -28,6 +28,7 @@ from urllib.parse import unquote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 from snipebot.adapters.marketplaces.base import (
+    HomeLocation,
     Listing,
     MarketplaceError,
     PlatformQuery,
@@ -35,6 +36,7 @@ from snipebot.adapters.marketplaces.base import (
     SearchPage,
     TaxonomyOption,
     TtlCache,
+    distance_meters,
     find_option,
 )
 from snipebot.adapters.marketplaces.scout24 import battery_kwh
@@ -109,6 +111,18 @@ _IGNORED_FRAGMENT_KEYS = {
 }
 _RANGE_LABEL_FALLBACKS = {"PriceCents": "Prijs"}
 _NUMBER = re.compile(r"\d+")
+_COUNTRY_CODES = {
+    "Nederland": "NL",
+    "België": "BE",
+    "Belgique": "BE",
+    "Duitsland": "DE",
+    "Deutschland": "DE",
+    "Allemagne": "DE",
+    "Frankrijk": "FR",
+    "France": "FR",
+    "Luxemburg": "LU",
+    "Luxembourg": "LU",
+}
 
 Fetcher = Callable[[str, str], str]
 
@@ -326,12 +340,14 @@ def apply_seller_type(
 
 
 def parse_search_response(
-    payload: dict[str, Any], site: MarktplaatsSite = MARKTPLAATS
+    payload: dict[str, Any],
+    site: MarktplaatsSite = MARKTPLAATS,
+    home: HomeLocation | None = None,
 ) -> SearchPage:
     listings_raw = payload.get("listings")
     if not isinstance(listings_raw, list):
         raise MarktplaatsError("parse_error", "Search response has no listings")
-    listings = [listing for raw in listings_raw if (listing := parse_listing(raw, site))]
+    listings = [listing for raw in listings_raw if (listing := parse_listing(raw, site, home))]
     facets = payload.get("facets")
     total_count = int(payload.get("totalResultCount") or 0)
     return SearchPage(
@@ -342,7 +358,9 @@ def parse_search_response(
     )
 
 
-def parse_listing(raw: Any, site: MarktplaatsSite = MARKTPLAATS) -> Listing | None:
+def parse_listing(
+    raw: Any, site: MarktplaatsSite = MARKTPLAATS, home: HomeLocation | None = None
+) -> Listing | None:
     if not isinstance(raw, dict):
         return None
     item_id = raw.get("itemId")
@@ -369,6 +387,11 @@ def parse_listing(raw: Any, site: MarktplaatsSite = MARKTPLAATS) -> Listing | No
     price_cents = _as_int(price_info.get("priceCents"))
     location = raw.get("location") or {}
     distance = _as_int(location.get("distanceMeters"))
+    if distance is None or distance < 0:
+        distance = distance_meters(home, location.get("latitude"), location.get("longitude"))
+    attributes.setdefault(
+        "country", _COUNTRY_CODES.get(str(location.get("countryName") or ""), site.country)
+    )
 
     return Listing(
         item_id=item_id,
@@ -378,7 +401,7 @@ def parse_listing(raw: Any, site: MarktplaatsSite = MARKTPLAATS) -> Listing | No
         image_url=_listing_image(raw),
         price=Decimal(price_cents) / 100 if price_cents and price_cents > 0 else None,
         price_type=price_info.get("priceType"),
-        city=_city_label(location.get("cityName"), site),
+        city=location.get("cityName") or None,
         distance_meters=distance if distance is not None and distance >= 0 else None,
         attributes=attributes,
         seller_type=_SELLER_TYPE_BY_ADVERTISER.get(attributes.get("advertiser", "")),
@@ -439,8 +462,14 @@ def describe_query(
 
 
 class MarktplaatsClient:
-    def __init__(self, fetch: Fetcher | None = None, site: MarktplaatsSite = MARKTPLAATS) -> None:
+    def __init__(
+        self,
+        fetch: Fetcher | None = None,
+        site: MarktplaatsSite = MARKTPLAATS,
+        home: HomeLocation | None = None,
+    ) -> None:
         self.site = site
+        self.home = home
         self._fetch = fetch or (lambda url, accept: _http_fetch(url, accept, site.label))
 
     def resolve(self, url: str) -> ResolvedSearch:
@@ -459,7 +488,7 @@ class MarktplaatsClient:
             raise MarktplaatsError("parse_error", "Search response is not valid JSON") from exc
         if not isinstance(payload, dict):
             raise MarktplaatsError("parse_error", "Unexpected search response")
-        return parse_search_response(payload, self.site)
+        return parse_search_response(payload, self.site, self.home)
 
 
 class MarktplaatsAdapter:
@@ -474,8 +503,9 @@ class MarktplaatsAdapter:
         client: MarktplaatsClient | None = None,
         cache: TtlCache | None = None,
         site: MarktplaatsSite | None = None,
+        home: HomeLocation | None = None,
     ):
-        self.client = client or MarktplaatsClient(site=site or MARKTPLAATS)
+        self.client = client or MarktplaatsClient(site=site or MARKTPLAATS, home=home)
         self.key = self.client.site.key
         self.label = self.client.site.label
         self._cache = cache or TtlCache()

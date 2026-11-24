@@ -34,6 +34,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from snipebot.adapters.marketplaces.base import (
+    HomeLocation,
     Listing,
     MarketplaceError,
     PlatformQuery,
@@ -64,6 +65,9 @@ class Scout24Site:
     # Fixed query parameters, e.g. the countries to search.
     extra_query: dict[str, str] = field(default_factory=dict)
     home_country: str = "NL"
+    # The site returns distanceToSearchLocationInKm when given a postcode; a
+    # radius is needed, as the default radius would drop listings.
+    distance_search: bool = False
 
 
 AUTOTRACK = Scout24Site(
@@ -84,7 +88,9 @@ AUTOSCOUT24 = Scout24Site(
     listing_prefix="/aanbod/",
     dealers_only=False,
     extra_query={"cy": "NL,B,D"},
+    distance_search=True,
 )
+DISTANCE_RADIUS_KM = 2000
 SITES = {site.key: site for site in (AUTOTRACK, AUTOSCOUT24)}
 
 _NEXT_DATA = re.compile(
@@ -183,8 +189,10 @@ class Scout24Client:
         *,
         sleep: Callable[[float], None] = time.sleep,
         page_delay: float = PAGE_DELAY_SECONDS,
+        home: HomeLocation | None = None,
     ) -> None:
         self.site = site
+        self.home = home
         self._fetch = fetch or (lambda url: http_fetch(url, site.label))
         self._sleep = sleep
         self._page_delay = page_delay
@@ -200,11 +208,19 @@ class Scout24Client:
         total = 0
         page_count = 1
         page = 1
+        distance: dict[str, Any] = {}
+        if self.site.distance_search and self.home is not None and self.home.postcode:
+            distance = {
+                "zip": self.home.postcode,
+                "zipc": self.home.country,
+                "zipr": DISTANCE_RADIUS_KM,
+            }
         while page <= min(page_count, max_pages):
             if page > 1:
                 self._sleep(self._page_delay)
             props = self.props(
-                self.site.search_path, {**query, "sort": "age", "desc": "1", "page": page}
+                self.site.search_path,
+                {**query, **distance, "sort": "age", "desc": "1", "page": page},
             )
             raw_listings = props.get("listings")
             if not isinstance(raw_listings, list):
@@ -232,11 +248,12 @@ class Scout24Adapter:
         site: Scout24Site,
         client: Scout24Client | None = None,
         cache: TtlCache | None = None,
+        home: HomeLocation | None = None,
     ) -> None:
         self.site = site
         self.key = site.key
         self.label = site.label
-        self.client = client or Scout24Client(site)
+        self.client = client or Scout24Client(site, home=home)
         self._cache = cache or TtlCache()
 
     def makes(self) -> list[TaxonomyOption]:
@@ -340,6 +357,7 @@ def parse_listing(raw: Any, site: Scout24Site) -> Listing | None:
     location = raw.get("location") or {}
     if location.get("countryCode"):
         attributes["country"] = str(location["countryCode"])
+    distance_km = location.get("distanceToSearchLocationInKm")
     return Listing(
         item_id=raw["id"],
         title=title,
@@ -348,8 +366,8 @@ def parse_listing(raw: Any, site: Scout24Site) -> Listing | None:
         image_url=f"{original_image_url(images[0])}/{LISTING_IMAGE_SIZE}" if images else None,
         price=Decimal(int(price_raw)) if isinstance(price_raw, int) and price_raw > 0 else None,
         price_type=None,
-        city=city_label(location, site),
-        distance_meters=None,
+        city=str(location["city"]).title() if location.get("city") else None,
+        distance_meters=round(distance_km * 1000) if isinstance(distance_km, int | float) else None,
         attributes=attributes,
         seller_type=_SELLER_TYPES.get(str((raw.get("seller") or {}).get("type"))),
         marketplace=site.key,

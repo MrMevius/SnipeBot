@@ -9,6 +9,7 @@ normalized ``Listing.specs`` (see ``snipebot.domain.search_filters``).
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from collections.abc import Callable
@@ -111,6 +112,32 @@ class SearchFilters:
     def from_dict(cls, payload: dict[str, Any]) -> SearchFilters:
         names = set(cls.__dataclass_fields__)
         return cls(**{key: value for key, value in payload.items() if key in names})
+
+
+@dataclass(frozen=True, slots=True)
+class HomeLocation:
+    """Where distances to listings are measured from (straight line)."""
+
+    name: str
+    latitude: float
+    longitude: float
+    postcode: str | None = None
+    country: str = "NL"
+
+
+def distance_meters(home: HomeLocation | None, latitude: Any, longitude: Any) -> int | None:
+    """Great-circle distance from ``home``; None without usable coordinates."""
+    if home is None or not isinstance(latitude, int | float) or not isinstance(longitude, int | float):
+        return None
+    if latitude == 0 and longitude == 0:
+        return None
+    lat1, lon1, lat2, lon2 = map(
+        math.radians, (home.latitude, home.longitude, float(latitude), float(longitude))
+    )
+    a = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(
+        (lon2 - lon1) / 2
+    ) ** 2
+    return round(2 * 6_371_000 * math.asin(math.sqrt(a)))
 
 
 class PlatformAdapter(Protocol):

@@ -1613,3 +1613,46 @@ button.archive-thumb.active {
   color: #f85149;
   border-color: rgba(248, 81, 73, 0.5);
 }
+
+.listing-location {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.listing-distance {
+  margin-left: 2px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(31, 111, 235, 0.15);
+  color: #8fc1ff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.flag {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 14px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+.flag-unknown {
+  width: auto;
+  padding: 0 3px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--muted);
+}
+
+.flag-nl { background: linear-gradient(#ae1c28 33.3%, #fff 33.3% 66.6%, #21468b 66.6%); }
+.flag-be { background: linear-gradient(90deg, #000 33.3%, #fdda24 33.3% 66.6%, #ef3340 66.6%); }
+.flag-de { background: linear-gradient(#000 33.3%, #dd0000 33.3% 66.6%, #ffce00 66.6%); }
+.flag-fr { background: linear-gradient(90deg, #0055a4 33.3%, #fff 33.3% 66.6%, #ef4135 66.6%); }
+.flag-lu { background: linear-gradient(#ed2939 33.3%, #fff 33.3% 66.6%, #00a1de 66.6%); }
+.flag-at { background: linear-gradient(#ed2939 33.3%, #fff 33.3% 66.6%, #ed2939 66.6%); }
+.flag-it { background: linear-gradient(90deg, #009246 33.3%, #fff 33.3% 66.6%, #ce2b37 66.6%); }
+.flag-pl { background: linear-gradient(#fff 50%, #dc143c 50%); }
