@@ -45,6 +45,7 @@ from snipebot.adapters.marketplaces.base import (
 from snipebot.adapters.marketplaces.marktplaats import SELLER_TYPES
 from snipebot.adapters.marketplaces.platforms import (
     PLATFORM_LABELS,
+    SHARED_LISTING_IDS,
     get_adapters,
     platform_label,
 )
@@ -765,10 +766,15 @@ def _sync_sources(
 ) -> None:
     """Add, update and remove sources; only changed queries start a new baseline."""
     existing = {source.marketplace: source for source in search.sources}
+    successors = {old: new for new, old in SHARED_LISTING_IDS.items() if new in queries}
     for key, source in existing.items():
         if key not in queries:
             search.sources.remove(source)
-            _delete_platform_listings(db_session, search, key)
+            if key in successors:
+                # Same listings under the same ids: keep them and their history.
+                _move_platform_listings(db_session, search, key, successors[key])
+            else:
+                _delete_platform_listings(db_session, search, key)
     for key, built in queries.items():
         source = existing.get(key)
         if source is None:
@@ -802,6 +808,17 @@ def _delete_platform_listings(db_session: Session, search: MarketplaceSearch, ke
         )
     for row in rows:
         db_session.delete(row)
+
+
+def _move_platform_listings(
+    db_session: Session, search: MarketplaceSearch, old: str, new: str
+) -> None:
+    for row in db_session.scalars(
+        select(MarketplaceListing).where(
+            MarketplaceListing.search_id == search.id, MarketplaceListing.marketplace == old
+        )
+    ).all():
+        row.marketplace = new
 
 
 def _canonical(value: Any) -> Any:

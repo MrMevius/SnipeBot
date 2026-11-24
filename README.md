@@ -11,7 +11,7 @@ SnipeBot is a self-hosted price-tracking application with a Docker-first runtime
 
 ## Car searches (Marktplaats and more)
 
-Besides product pages, SnipeBot can watch car searches on several platforms at once (Marktplaats.nl and AutoTrack.nl):
+Besides product pages, SnipeBot can watch car searches on several platforms at once (Marktplaats.nl, AutoScout24.nl and AutoTrack.nl):
 
 1. Open **Searches**, choose a make and model (the lists come from the platforms; a platform that lacks the model is greyed out), tick the platforms and set the filters you need: year, price, mileage, minimum range and battery capacity.
 2. Optionally add exclude words and a seller filter, click **Preview** and compare the count per platform with the websites, then **Save search**.
@@ -25,6 +25,7 @@ Each platform is an adapter (`backend/src/snipebot/adapters/marketplaces/`) impl
 Platform notes:
 
 - **Marktplaats** filters on every SnipeBot filter itself; a check reads the newest 100 listings.
+- **AutoScout24** (autoscout24.nl) is searched in the Netherlands, Belgium and Germany, with dealers and private sellers; it shows the part of the German offer that is advertised to Dutch buyers. Cars abroad show the country with the city ("Dilbeek (BE)"); their prices exclude Dutch BPM and import costs. Range and battery capacity work as for AutoTrack below, and are unknown more often for foreign listings. AutoScout24.nl includes every AutoTrack listing under the same id: switching a search from AutoTrack to AutoScout24 keeps its listings, price history and archived photos.
 - **AutoTrack** lists dealer cars only (a "private only" search cannot include it) and cannot filter on range or battery capacity, so SnipeBot checks those itself: range comes from the listing data, battery capacity only from the title (e.g. "78 kWh"), so it is often unknown. A check reads all result pages newest first (20 per page, at most 20 pages, 3 s apart). AutoTrack's robots.txt disallows crawlers on search pages; SnipeBot uses it for personal searches at the regular cadence and backs off when blocked. AutoTrack is moving pages to a newer site without the page data SnipeBot reads; when that reaches search pages, the search shows a parse error instead of wrong results.
 
 Searches created earlier from a pasted Marktplaats URL keep working; choose a make and model on the search page to switch them to filters and add platforms.

@@ -746,6 +746,7 @@ export type ArchiveStatus = "pending" | "archived" | "gone" | "error";
 
 export const PLATFORM_LABELS: Record<string, string> = {
   marktplaats: "Marktplaats",
+  autoscout24: "AutoScout24",
   autotrack: "AutoTrack",
 };
 

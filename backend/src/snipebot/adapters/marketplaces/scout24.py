@@ -1,19 +1,23 @@
-"""AutoTrack.nl adapter (an AutoScout24 site).
+"""Adapters for the AutoScout24 group sites: AutoTrack.nl and AutoScout24.nl.
 
-Search and listing pages are Next.js pages: ``__NEXT_DATA__`` holds the result
+Both sites run the same Next.js application: ``__NEXT_DATA__`` holds the result
 list (``listings``, 20 per page), the make/model taxonomy and, on a listing
-page, ``listingDetails``. Searches are addressed as ``/aanbod?cat=ma<make>mo<model>``
-plus range parameters, sorted newest first so a growing result set adds to the
-front. AutoTrack lists dealer cars only and cannot filter on electric range or
-battery capacity; SnipeBot checks those itself.
+page, ``listingDetails``. A listing has the same id on both sites. Searches are
+addressed as ``<search path>?cat=ma<make>mo<model>`` plus range parameters,
+sorted newest first so a growing result set adds to the front. Neither site
+filters on electric range or battery capacity; SnipeBot checks those itself.
 
-AutoTrack's robots.txt disallows crawlers on search pages. The owner accepted
-this for personal use at a low rate: the regular search cadence, a pause
-between result pages and backoff when AutoTrack blocks requests.
+- AutoTrack lists dealer cars in the Netherlands only. Its robots.txt disallows
+  crawlers on search pages; the owner accepted this for personal use at a low
+  rate. It is moving pages to a newer site without ``__NEXT_DATA__`` (in
+  November 2026 only the bare ``/aanbod`` overview); such a page fails with a
+  ``parse_error`` that shows on the search rather than yielding wrong results.
+- AutoScout24.nl also lists private sellers and is searched in the Netherlands,
+  Belgium and Germany (``cy=NL,B,D``; the owner's choice). It shows the part of
+  the German offer that is advertised to Dutch buyers.
 
-AutoTrack is moving pages to a newer site without ``__NEXT_DATA__`` (in
-November 2026 only the bare ``/aanbod`` overview). Such a page fails with a
-``parse_error`` that shows on the search, rather than yielding wrong results.
+Requests use the regular search cadence, a pause between result pages and
+backoff when a site blocks requests.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ import json
 import re
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 from urllib.error import HTTPError
@@ -39,14 +44,48 @@ from snipebot.adapters.marketplaces.base import (
     find_option,
 )
 
-BASE_URL = "https://www.autotrack.nl"
-AUTOTRACK_HOSTS = {"autotrack.nl", "www.autotrack.nl"}
 IMAGE_HOSTS = {"prod.pictures.autoscout24.net"}
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) SnipeBot/0.1"
 MAX_PAGES = 20
 PAGE_DELAY_SECONDS = 3.0
 # Resized JPEG for list thumbnails and Telegram; the archive keeps originals.
 LISTING_IMAGE_SIZE = "720x540.jpg"
+
+
+@dataclass(frozen=True, slots=True)
+class Scout24Site:
+    key: str
+    label: str
+    base_url: str
+    hosts: frozenset[str]
+    search_path: str
+    listing_prefix: str
+    dealers_only: bool
+    # Fixed query parameters, e.g. the countries to search.
+    extra_query: dict[str, str] = field(default_factory=dict)
+    home_country: str = "NL"
+
+
+AUTOTRACK = Scout24Site(
+    key="autotrack",
+    label="AutoTrack",
+    base_url="https://www.autotrack.nl",
+    hosts=frozenset({"autotrack.nl", "www.autotrack.nl"}),
+    search_path="/aanbod",
+    listing_prefix="/a/",
+    dealers_only=True,
+)
+AUTOSCOUT24 = Scout24Site(
+    key="autoscout24",
+    label="AutoScout24",
+    base_url="https://www.autoscout24.nl",
+    hosts=frozenset({"autoscout24.nl", "www.autoscout24.nl"}),
+    search_path="/lst",
+    listing_prefix="/aanbod/",
+    dealers_only=False,
+    extra_query={"cy": "NL,B,D"},
+)
+SITES = {site.key: site for site in (AUTOTRACK, AUTOSCOUT24)}
 
 _NEXT_DATA = re.compile(
     r"<script\b[^>]*\bid=\"__NEXT_DATA__\"[^>]*>(.*?)</script\s*>", re.DOTALL
@@ -60,42 +99,41 @@ _QUERY_PARAMS = {
     "mileage": ("kmfrom", "kmto"),
 }
 _POST_FILTERS = ("range", "battery")
-_SELLER_TYPES = {"Dealer": "business", "Private": "private"}
+_SELLER_TYPES = {"Dealer": "business", "Private": "private", "PrivateSeller": "private"}
+_CUSTOMER_TYPES = {"private": "P", "business": "D"}
 
 Fetcher = Callable[[str], str]
 
 
-class AutoTrackError(MarketplaceError):
-    """AutoTrack failure; ``gone`` means the listing no longer exists."""
+class Scout24Error(MarketplaceError):
+    """AutoTrack/AutoScout24 failure; ``gone`` means the listing no longer exists."""
 
 
-def http_fetch(url: str) -> str:
+def http_fetch(url: str, label: str = "AutoScout24") -> str:
     request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html"})
     try:
         with urlopen(request, timeout=20) as response:
             return response.read().decode("utf-8", errors="replace")
     except HTTPError as exc:
         if exc.code in {403, 429}:
-            raise AutoTrackError("blocked", f"AutoTrack returned HTTP {exc.code}") from exc
+            raise Scout24Error("blocked", f"{label} returned HTTP {exc.code}") from exc
         if exc.code in {404, 410}:
-            raise AutoTrackError("gone", "AutoTrack page not found") from exc
-        raise AutoTrackError("fetch_error", f"AutoTrack returned HTTP {exc.code}") from exc
+            raise Scout24Error("gone", f"{label} page not found") from exc
+        raise Scout24Error("fetch_error", f"{label} returned HTTP {exc.code}") from exc
     except OSError as exc:
-        raise AutoTrackError("fetch_error", f"AutoTrack request failed: {exc}") from exc
+        raise Scout24Error("fetch_error", f"{label} request failed: {exc}") from exc
 
 
-def page_props(html: str) -> dict[str, Any]:
+def page_props(html: str, label: str = "AutoScout24") -> dict[str, Any]:
     match = _NEXT_DATA.search(html)
     if not match:
-        raise AutoTrackError(
-            "parse_error", "AutoTrack page data not found (unsupported page layout)"
-        )
+        raise Scout24Error("parse_error", f"{label} page data not found (unsupported page layout)")
     try:
         props = json.loads(match.group(1))["props"]["pageProps"]
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise AutoTrackError("parse_error", "AutoTrack page data is not valid") from exc
+        raise Scout24Error("parse_error", f"{label} page data is not valid") from exc
     if not isinstance(props, dict):
-        raise AutoTrackError("parse_error", "AutoTrack page data is not valid")
+        raise Scout24Error("parse_error", f"{label} page data is not valid")
     return props
 
 
@@ -118,23 +156,34 @@ def battery_kwh(text: str) -> float | None:
     return value if 10 <= value <= 250 else None
 
 
-class AutoTrackClient:
+def city_label(location: dict[str, Any], site: Scout24Site) -> str | None:
+    """City, with the country code when the car is abroad ("Dilbeek (BE)")."""
+    city = str(location["city"]).title() if location.get("city") else None
+    country = location.get("countryCode")
+    if city and country and country != site.home_country:
+        return f"{city} ({country})"
+    return city
+
+
+class Scout24Client:
     def __init__(
         self,
+        site: Scout24Site,
         fetch: Fetcher | None = None,
         *,
         sleep: Callable[[float], None] = time.sleep,
         page_delay: float = PAGE_DELAY_SECONDS,
     ) -> None:
-        self._fetch = fetch or http_fetch
+        self.site = site
+        self._fetch = fetch or (lambda url: http_fetch(url, site.label))
         self._sleep = sleep
         self._page_delay = page_delay
 
     def props(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        url = f"{BASE_URL}{path}"
+        url = f"{self.site.base_url}{path}"
         if params:
             url = f"{url}?{urlencode(params)}"
-        return page_props(self._fetch(url))
+        return page_props(self._fetch(url), self.site.label)
 
     def search(self, query: dict[str, Any], *, max_pages: int = MAX_PAGES) -> SearchPage:
         listings: dict[str, Listing] = {}
@@ -144,14 +193,16 @@ class AutoTrackClient:
         while page <= min(page_count, max_pages):
             if page > 1:
                 self._sleep(self._page_delay)
-            props = self.props("/aanbod", {**query, "sort": "age", "desc": "1", "page": page})
+            props = self.props(
+                self.site.search_path, {**query, "sort": "age", "desc": "1", "page": page}
+            )
             raw_listings = props.get("listings")
             if not isinstance(raw_listings, list):
-                raise AutoTrackError("parse_error", "AutoTrack search page has no listings")
+                raise Scout24Error("parse_error", f"{self.site.label} search page has no listings")
             total = int(props.get("numberOfResults") or 0)
             page_count = int(props.get("numberOfPages") or 1)
             for raw in raw_listings:
-                listing = parse_listing(raw)
+                listing = parse_listing(raw, self.site)
                 if listing is not None:
                     # Pages can overlap when listings are added while paging.
                     listings.setdefault(listing.item_id, listing)
@@ -163,14 +214,19 @@ class AutoTrackClient:
         )
 
 
-class AutoTrackAdapter:
-    """``PlatformAdapter`` for cars on AutoTrack.nl."""
+class Scout24Adapter:
+    """``PlatformAdapter`` for cars on an AutoScout24 group site."""
 
-    key = "autotrack"
-    label = "AutoTrack"
-
-    def __init__(self, client: AutoTrackClient | None = None, cache: TtlCache | None = None):
-        self.client = client or AutoTrackClient()
+    def __init__(
+        self,
+        site: Scout24Site,
+        client: Scout24Client | None = None,
+        cache: TtlCache | None = None,
+    ) -> None:
+        self.site = site
+        self.key = site.key
+        self.label = site.label
+        self.client = client or Scout24Client(site)
         self._cache = cache or TtlCache()
 
     def makes(self) -> list[TaxonomyOption]:
@@ -178,7 +234,8 @@ class AutoTrackAdapter:
 
     def models(self, make: TaxonomyOption) -> list[TaxonomyOption]:
         def load() -> list[TaxonomyOption]:
-            taxonomy = self.client.props("/aanbod", {"cat": f"ma{make.id}"}).get("taxonomy") or {}
+            props = self.client.props(self.site.search_path, {"cat": f"ma{make.id}"})
+            taxonomy = props.get("taxonomy") or {}
             return [
                 TaxonomyOption(id=str(item["value"]), label=str(item["label"]))
                 for item in (taxonomy.get("models") or {}).get(make.id) or []
@@ -188,17 +245,20 @@ class AutoTrackAdapter:
         return self._cache.get(f"models:{make.id}", load)
 
     def build_query(self, filters: SearchFilters, seller_type: str) -> PlatformQuery:
-        if seller_type == "private":
-            raise AutoTrackError("unsupported", "AutoTrack only lists cars from dealers")
+        label = self.site.label
+        if seller_type == "private" and self.site.dealers_only:
+            raise Scout24Error("unsupported", f"{label} only lists cars from dealers")
         make = find_option(self.makes(), filters.make)
         if make is None:
-            raise AutoTrackError("unsupported", f"{filters.make} is not available on AutoTrack")
+            raise Scout24Error("unsupported", f"{filters.make} is not available on {label}")
         model = find_option(self.models(make), filters.model)
         if model is None:
-            raise AutoTrackError(
-                "unsupported", f"{filters.make} {filters.model} is not available on AutoTrack"
+            raise Scout24Error(
+                "unsupported", f"{filters.make} {filters.model} is not available on {label}"
             )
-        query: dict[str, Any] = {"cat": f"ma{make.id}mo{model.id}"}
+        query: dict[str, Any] = {"cat": f"ma{make.id}mo{model.id}", **self.site.extra_query}
+        if seller_type in _CUSTOMER_TYPES and not self.site.dealers_only:
+            query["custtype"] = _CUSTOMER_TYPES[seller_type]
         for key, (low_param, high_param) in _QUERY_PARAMS.items():
             low, high = filters.bounds(key)
             if low is not None:
@@ -212,20 +272,20 @@ class AutoTrackAdapter:
         return self.client.search(query, max_pages=1 if limit else MAX_PAGES)
 
     def _load_makes(self) -> list[TaxonomyOption]:
-        # The bare /aanbod page uses AutoTrack's newer site without page data;
+        # A bare search page may use AutoTrack's newer site without page data;
         # any filtered search page carries the full make list.
-        taxonomy = self.client.props("/aanbod", {"atype": "C"}).get("taxonomy") or {}
+        taxonomy = self.client.props(self.site.search_path, {"atype": "C"}).get("taxonomy") or {}
         makes = [
             TaxonomyOption(id=str(item["value"]), label=str(item["label"]))
             for item in taxonomy.get("makesSorted") or []
             if item.get("value") is not None and item.get("label")
         ]
         if not makes:
-            raise AutoTrackError("parse_error", "AutoTrack returned no car makes")
+            raise Scout24Error("parse_error", f"{self.site.label} returned no car makes")
         return makes
 
 
-def parse_listing(raw: Any) -> Listing | None:
+def parse_listing(raw: Any, site: Scout24Site) -> Listing | None:
     if not isinstance(raw, dict) or not isinstance(raw.get("id"), str):
         return None
     path = raw.get("url")
@@ -272,20 +332,21 @@ def parse_listing(raw: Any) -> Listing | None:
         if value
     }
     location = raw.get("location") or {}
-    city = location.get("city")
+    if location.get("countryCode"):
+        attributes["country"] = str(location["countryCode"])
     return Listing(
         item_id=raw["id"],
         title=title,
         description="",
-        url=f"{BASE_URL}{path}",
+        url=f"{site.base_url}{path}",
         image_url=f"{original_image_url(images[0])}/{LISTING_IMAGE_SIZE}" if images else None,
         price=Decimal(int(price_raw)) if isinstance(price_raw, int) and price_raw > 0 else None,
         price_type=None,
-        city=str(city).title() if city else None,
+        city=city_label(location, site),
         distance_meters=None,
         attributes=attributes,
         seller_type=_SELLER_TYPES.get(str((raw.get("seller") or {}).get("type"))),
-        marketplace="autotrack",
+        marketplace=site.key,
         specs=specs,
         license_plate=normalize_plate((vehicle.get("jsonLd") or {}).get("licensePlate")),
     )
