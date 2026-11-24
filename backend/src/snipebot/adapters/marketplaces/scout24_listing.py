@@ -23,6 +23,7 @@ from snipebot.adapters.marketplaces.scout24 import (
     Scout24Error,
     Scout24Site,
     city_label,
+    vehicle_title,
     http_fetch,
     normalize_plate,
     original_image_url,
@@ -112,11 +113,7 @@ def parse_listing_page(page_html: str, *, url: str, site: Scout24Site) -> Listin
     vehicle = details.get("vehicle") or {}
     if not isinstance(item_id, str):
         raise Scout24Error("parse_error", f"{site.label} listing has no id")
-    title = " ".join(
-        str(part).strip()
-        for part in (vehicle.get("make"), vehicle.get("model"), vehicle.get("modelVersionInput"))
-        if part
-    ) or str(details.get("title") or "").strip()
+    title = vehicle_title(vehicle) or str(details.get("title") or "").strip()
 
     public_price = ((details.get("prices") or {}).get("public") or {}).get("priceRaw")
     location = details.get("location") or {}
