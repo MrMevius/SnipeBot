@@ -177,12 +177,67 @@ describe("Marktplaats searches", () => {
     expect(text).toContain("Volkswagen Golf 300");
     expect(text).toContain("new");
     expect(text.replace(/\s/g, " ")).toContain("was € 22.500");
-    expect(text).toContain("2021 · 64.500 km · Benzine");
+    expect(text).toContain("2021");
+    expect(text.replace(/\s/g, " ")).toContain("64.500 km");
+    expect(text).toContain("Benzine");
     expect(text).toContain("Almelo (12 km)");
     await waitFor(() =>
       expect(
         (screen.getByLabelText("Exclude words (comma separated)") as HTMLInputElement).value,
       ).toBe("schade"),
     );
+  });
+
+  it("sorts listings by the clicked column", async () => {
+    const base = {
+      url: "https://www.marktplaats.nl/v/m",
+      image_url: null,
+      price_type: "FIXED",
+      first_price: null,
+      city: "Almelo",
+      distance_km: null,
+      seller_type: "private",
+      is_new: false,
+      last_seen_at: "2026-11-23T10:00:00Z",
+      gone_at: null,
+      price_history: [],
+    };
+    const items = [
+      { ...base, id: 1, item_id: "m1", title: "B car", current_price: 30000,
+        attributes: { constructionYear: "2024", mileage: "20000" }, first_seen_at: "2026-11-23T09:00:00Z" },
+      { ...base, id: 2, item_id: "m2", title: "A car", current_price: null,
+        attributes: { constructionYear: "2025", mileage: "5000" }, first_seen_at: "2026-11-23T11:00:00Z" },
+      { ...base, id: 3, item_id: "m3", title: "C car", current_price: 25000,
+        attributes: { constructionYear: "2026", mileage: "100" }, first_seen_at: "2026-11-23T10:00:00Z" },
+    ];
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/searches/7/listings")) {
+        return jsonResponse({ search_id: 7, items });
+      }
+      if (url.endsWith("/searches/7")) {
+        return jsonResponse(savedSearch);
+      }
+      return backgroundResponse(url);
+    });
+
+    window.history.pushState({}, "", "/searches/7");
+    render(<App />);
+
+    const order = () =>
+      screen.getAllByTestId(/^listing-row-/).map((row) => row.getAttribute("data-testid"));
+    await screen.findByTestId("listing-row-m1");
+    expect(order()).toEqual(["listing-row-m2", "listing-row-m3", "listing-row-m1"]);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Price/ }));
+    expect(order()).toEqual(["listing-row-m3", "listing-row-m1", "listing-row-m2"]);
+    fireEvent.click(screen.getByRole("button", { name: /^Price/ }));
+    expect(order()).toEqual(["listing-row-m1", "listing-row-m3", "listing-row-m2"]);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Mileage/ }));
+    expect(order()).toEqual(["listing-row-m3", "listing-row-m2", "listing-row-m1"]);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Listing/ }));
+    expect(order()).toEqual(["listing-row-m2", "listing-row-m1", "listing-row-m3"]);
   });
 });
