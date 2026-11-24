@@ -1,4 +1,8 @@
-"""Marktplaats.nl saved-search adapter.
+"""Marktplaats.nl and 2dehands.be saved-search adapter.
+
+2dehands.be (French: 2ememain.be) runs on the Marktplaats platform: the same
+search API, category ids, attribute ids and listing pages. ``MarktplaatsSite``
+holds what differs per site.
 
 ``MarktplaatsAdapter`` builds searches from SnipeBot's own filters. Searches
 created before that were pasted search URLs, resolved as described below.
@@ -33,10 +37,45 @@ from snipebot.adapters.marketplaces.base import (
     TtlCache,
     find_option,
 )
+from snipebot.adapters.marketplaces.scout24 import battery_kwh
 
 BASE_URL = "https://www.marktplaats.nl"
 SEARCH_API_URL = f"{BASE_URL}/lrp/api/search"
 MARKTPLAATS_HOSTS = {"marktplaats.nl", "www.marktplaats.nl"}
+
+
+@dataclass(frozen=True, slots=True)
+class MarktplaatsSite:
+    key: str
+    label: str
+    base_url: str
+    hosts: frozenset[str]
+    # Country of the listings; shown with the city when it is not NL.
+    country: str = "NL"
+    # Filters SnipeBot checks itself. The site's own filter drops listings that
+    # do not state the value, which leaves out most cars where sellers rarely
+    # fill it in; checking it here applies the search's unknown-value policy.
+    post_filter_keys: tuple[str, ...] = ()
+
+    @property
+    def search_api_url(self) -> str:
+        return f"{self.base_url}/lrp/api/search"
+
+
+MARKTPLAATS = MarktplaatsSite(
+    key="marktplaats",
+    label="Marktplaats",
+    base_url=BASE_URL,
+    hosts=frozenset(MARKTPLAATS_HOSTS),
+)
+TWEEDEHANDS = MarktplaatsSite(
+    key="2dehands",
+    label="2dehands",
+    base_url="https://www.2dehands.be",
+    hosts=frozenset({"2dehands.be", "www.2dehands.be", "2ememain.be", "www.2ememain.be"}),
+    country="BE",
+    post_filter_keys=("range", "battery"),
+)
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) SnipeBot/0.1"
 PAGE_LIMIT = 100
 SELLER_TYPES = ("all", "private", "business")
@@ -286,11 +325,13 @@ def apply_seller_type(
     return result
 
 
-def parse_search_response(payload: dict[str, Any]) -> SearchPage:
+def parse_search_response(
+    payload: dict[str, Any], site: MarktplaatsSite = MARKTPLAATS
+) -> SearchPage:
     listings_raw = payload.get("listings")
     if not isinstance(listings_raw, list):
         raise MarktplaatsError("parse_error", "Search response has no listings")
-    listings = [listing for raw in listings_raw if (listing := parse_listing(raw))]
+    listings = [listing for raw in listings_raw if (listing := parse_listing(raw, site))]
     facets = payload.get("facets")
     total_count = int(payload.get("totalResultCount") or 0)
     return SearchPage(
@@ -301,7 +342,7 @@ def parse_search_response(payload: dict[str, Any]) -> SearchPage:
     )
 
 
-def parse_listing(raw: Any) -> Listing | None:
+def parse_listing(raw: Any, site: MarktplaatsSite = MARKTPLAATS) -> Listing | None:
     if not isinstance(raw, dict):
         return None
     item_id = raw.get("itemId")
@@ -316,6 +357,14 @@ def parse_listing(raw: Any) -> Listing | None:
             if isinstance(item, dict) and item.get("key") and item.get("value") is not None:
                 attributes.setdefault(str(item["key"]), str(item["value"]))
 
+    specs: dict[str, float] = {
+        key: number
+        for key, attribute in _FILTER_RANGES.items()
+        if key != "price" and (number := _leading_int(attributes.get(attribute))) is not None
+    }
+    if "battery" not in specs and (battery := battery_kwh(title)) is not None:
+        specs["battery"] = battery
+
     price_info = raw.get("priceInfo") or {}
     price_cents = _as_int(price_info.get("priceCents"))
     location = raw.get("location") or {}
@@ -325,19 +374,16 @@ def parse_listing(raw: Any) -> Listing | None:
         item_id=item_id,
         title=title.strip(),
         description=str(raw.get("description") or ""),
-        url=vip_url if vip_url.startswith("http") else f"{BASE_URL}{vip_url}",
+        url=vip_url if vip_url.startswith("http") else f"{site.base_url}{vip_url}",
         image_url=_listing_image(raw),
         price=Decimal(price_cents) / 100 if price_cents and price_cents > 0 else None,
         price_type=price_info.get("priceType"),
-        city=location.get("cityName") or None,
+        city=_city_label(location.get("cityName"), site),
         distance_meters=distance if distance is not None and distance >= 0 else None,
         attributes=attributes,
         seller_type=_SELLER_TYPE_BY_ADVERTISER.get(attributes.get("advertiser", "")),
-        specs={
-            key: number
-            for key, attribute in _FILTER_RANGES.items()
-            if key != "price" and (number := _leading_int(attributes.get(attribute))) is not None
-        },
+        marketplace=site.key,
+        specs=specs,
     )
 
 
@@ -393,8 +439,9 @@ def describe_query(
 
 
 class MarktplaatsClient:
-    def __init__(self, fetch: Fetcher | None = None) -> None:
-        self._fetch = fetch or _http_fetch
+    def __init__(self, fetch: Fetcher | None = None, site: MarktplaatsSite = MARKTPLAATS) -> None:
+        self.site = site
+        self._fetch = fetch or (lambda url, accept: _http_fetch(url, accept, site.label))
 
     def resolve(self, url: str) -> ResolvedSearch:
         page_url, fragment = validate_search_url(url)
@@ -404,7 +451,7 @@ class MarktplaatsClient:
         return ResolvedSearch(query=query, category_names=names, warnings=warnings)
 
     def search(self, query: SearchQuery, *, limit: int = PAGE_LIMIT) -> SearchPage:
-        url = f"{SEARCH_API_URL}?{urlencode(query.api_params(limit=limit))}"
+        url = f"{self.site.search_api_url}?{urlencode(query.api_params(limit=limit))}"
         body = self._fetch(url, "application/json")
         try:
             payload = json.loads(body)
@@ -412,21 +459,25 @@ class MarktplaatsClient:
             raise MarktplaatsError("parse_error", "Search response is not valid JSON") from exc
         if not isinstance(payload, dict):
             raise MarktplaatsError("parse_error", "Unexpected search response")
-        return parse_search_response(payload)
+        return parse_search_response(payload, self.site)
 
 
 class MarktplaatsAdapter:
-    """``PlatformAdapter`` for cars on Marktplaats (category "Auto's").
+    """``PlatformAdapter`` for cars on Marktplaats or 2dehands (category "Auto's").
 
     Makes are l2 categories below "Auto's"; models are values of the ``model``
-    attribute of a make. Marktplaats filters every SnipeBot filter itself.
+    attribute of a make. The site filters every SnipeBot filter itself.
     """
 
-    key = "marktplaats"
-    label = "Marktplaats"
-
-    def __init__(self, client: MarktplaatsClient | None = None, cache: TtlCache | None = None):
-        self.client = client or MarktplaatsClient()
+    def __init__(
+        self,
+        client: MarktplaatsClient | None = None,
+        cache: TtlCache | None = None,
+        site: MarktplaatsSite | None = None,
+    ):
+        self.client = client or MarktplaatsClient(site=site or MARKTPLAATS)
+        self.key = self.client.site.key
+        self.label = self.client.site.label
         self._cache = cache or TtlCache()
 
     def makes(self) -> list[TaxonomyOption]:
@@ -443,11 +494,11 @@ class MarktplaatsAdapter:
     def build_query(self, filters: SearchFilters, seller_type: str) -> PlatformQuery:
         make = find_option(self.makes(), filters.make)
         if make is None:
-            raise MarktplaatsError("unsupported", f"{filters.make} is not available on Marktplaats")
+            raise MarktplaatsError("unsupported", f"{filters.make} is not available on {self.label}")
         model = find_option(self.models(make), filters.model)
         if model is None:
             raise MarktplaatsError(
-                "unsupported", f"{filters.make} {filters.model} is not available on Marktplaats"
+                "unsupported", f"{filters.make} {filters.model} is not available on {self.label}"
             )
         query = SearchQuery(
             l1_category_id=CARS_CATEGORY_ID,
@@ -455,6 +506,8 @@ class MarktplaatsAdapter:
             attribute_ids=[int(model.id), FOR_SALE_ATTRIBUTE_ID],
         )
         for key, attribute in _FILTER_RANGES.items():
+            if key in self.client.site.post_filter_keys:
+                continue
             low, high = filters.bounds(key)
             if key == "price":
                 low = low * 100 if low is not None else None
@@ -462,7 +515,9 @@ class MarktplaatsAdapter:
             if low is not None or high is not None:
                 query.ranges.append(AttributeRange(key=attribute, low=low, high=high))
         query = apply_seller_type(query, seller_type, self._make_facets(make.id))
-        return PlatformQuery(query=query.to_dict(), post_filters=[])
+        active = filters.active_keys()
+        post_filters = [key for key in self.client.site.post_filter_keys if key in active]
+        return PlatformQuery(query=query.to_dict(), post_filters=post_filters)
 
     def search(self, query: dict[str, Any], *, limit: int | None = None) -> SearchPage:
         return self.client.search(SearchQuery.from_dict(query), limit=limit or PAGE_LIMIT)
@@ -476,7 +531,7 @@ class MarktplaatsAdapter:
             if item.get("parentId") == CARS_CATEGORY_ID and item.get("label")
         ]
         if not makes:
-            raise MarktplaatsError("parse_error", "Marktplaats returned no car makes")
+            raise MarktplaatsError("parse_error", f"{self.label} returned no car makes")
         return makes
 
     def _make_facets(self, make_id: str) -> list[dict[str, Any]]:
@@ -487,7 +542,13 @@ class MarktplaatsAdapter:
         return self._cache.get(f"facets:{make_id}", load)
 
 
-def _http_fetch(url: str, accept: str) -> str:
+def _city_label(city: Any, site: MarktplaatsSite) -> str | None:
+    if not city:
+        return None
+    return f"{city} ({site.country})" if site.country != "NL" else str(city)
+
+
+def _http_fetch(url: str, accept: str, label: str = "Marktplaats") -> str:
     request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept})
     try:
         with urlopen(request, timeout=20) as response:
@@ -495,12 +556,12 @@ def _http_fetch(url: str, accept: str) -> str:
     except HTTPError as exc:
         kind = "blocked" if exc.code in {403, 429} else "fetch_error"
         if exc.code == 404:
-            raise MarktplaatsError("invalid_url", "Marktplaats page not found") from exc
+            raise MarktplaatsError("invalid_url", f"{label} page not found") from exc
         if exc.code == 410:
-            raise MarktplaatsError("gone", "Marktplaats listing was removed") from exc
-        raise MarktplaatsError(kind, f"Marktplaats returned HTTP {exc.code}") from exc
+            raise MarktplaatsError("gone", f"{label} listing was removed") from exc
+        raise MarktplaatsError(kind, f"{label} returned HTTP {exc.code}") from exc
     except OSError as exc:
-        raise MarktplaatsError("fetch_error", f"Marktplaats request failed: {exc}") from exc
+        raise MarktplaatsError("fetch_error", f"{label} request failed: {exc}") from exc
 
 
 def _listing_image(raw: dict[str, Any]) -> str | None:

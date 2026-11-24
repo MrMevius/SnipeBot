@@ -773,6 +773,16 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     note: "Leest per controle de nieuwste 100 advertenties.",
   },
   {
+    siteKey: "2dehands",
+    label: "2dehands / 2ememain",
+    domain: "2dehands.be",
+    status: "live",
+    countries: "BE",
+    sellers: "Particulier + bedrijf",
+    filters: "Actieradius en accucapaciteit door SnipeBot",
+    note: "Zelfde platform als Marktplaats. Belgische verkopers vullen actieradius en accu zelden in; die controleert SnipeBot zelf (Value not stated).",
+  },
+  {
     siteKey: "autoscout24",
     label: "AutoScout24",
     domain: "autoscout24.nl",
@@ -861,16 +871,6 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     sellers: "Vooral particulier",
     filters: "Nog te onderzoeken",
     note: "Duitse tegenhanger van Marktplaats.",
-  },
-  {
-    siteKey: "2dehands",
-    label: "2dehands / 2ememain",
-    domain: "2dehands.be",
-    status: "planned",
-    countries: "BE",
-    sellers: "Particulier + bedrijf",
-    filters: "Nog te onderzoeken",
-    note: "Zelfde platform als Marktplaats: waarschijnlijk de eenvoudigste koppeling.",
   },
   {
     siteKey: "leboncoin",

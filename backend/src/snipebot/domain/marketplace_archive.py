@@ -39,7 +39,7 @@ from snipebot.adapters.marketplaces import scout24_listing
 from snipebot.adapters.marketplaces.platforms import SHARED_LISTING_IDS
 from snipebot.adapters.marketplaces.scout24 import SITES, normalize_plate
 from snipebot.adapters.marketplaces.base import Listing, MarketplaceError
-from snipebot.adapters.marketplaces.marktplaats import Fetcher
+from snipebot.adapters.marketplaces.marktplaats import TWEEDEHANDS, Fetcher
 from snipebot.adapters.marketplaces.marktplaats_listing import (
     ImageFetcher,
     ListingDetail,
@@ -60,7 +60,7 @@ from snipebot.persistence.models import (
 logger = logging.getLogger(__name__)
 
 # Platforms whose listings are archived.
-ARCHIVE_MARKETPLACES = ("marktplaats", "autoscout24", "autotrack")
+ARCHIVE_MARKETPLACES = ("marktplaats", "2dehands", "autoscout24", "autotrack")
 DUE_BATCH_SIZE = 50
 MAX_FETCH_FAILURES = 5
 IMAGE_DELAY_SECONDS = 0.2
@@ -94,7 +94,13 @@ def build_sources(
                 url, fetch=fetch, image_size=settings.marketplace_archive_image_size
             ),
             fetch_image=image_fetcher or image_fetch,
-        )
+        ),
+        "2dehands": ArchiveSource(
+            fetch_detail=lambda url: fetch_listing(
+                url, image_size=settings.marketplace_archive_image_size, site=TWEEDEHANDS
+            ),
+            fetch_image=image_fetch,
+        ),
     }
     for key, site in SITES.items():
         sources[key] = ArchiveSource(

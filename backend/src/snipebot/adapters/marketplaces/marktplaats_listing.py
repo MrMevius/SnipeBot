@@ -1,4 +1,4 @@
-"""Marktplaats listing pages (``/v/...``): full details for the local archive.
+"""Marktplaats and 2dehands listing pages (``/v/...``): full details for the local archive.
 
 A listing page embeds most of its data as ``window.__CONFIG__`` JSON: title,
 price, gallery, seller and statistics, and for cars the labelled attributes.
@@ -23,15 +23,16 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from snipebot.adapters.marketplaces.marktplaats import (
-    BASE_URL,
-    MARKTPLAATS_HOSTS,
+    MARKTPLAATS,
     USER_AGENT,
     Fetcher,
     MarktplaatsError,
+    MarktplaatsSite,
+    _city_label,
     _http_fetch,
 )
 
-IMAGE_HOSTS = {"images.marktplaats.com"}
+IMAGE_HOSTS = {"images.marktplaats.com", "images.2dehands.com"}
 # "original" drops the resize rule: the uploaded file, byte-identical to the largest size.
 DEFAULT_IMAGE_SIZE = "original"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -116,13 +117,13 @@ class ListingDetail:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def validate_listing_url(url: str) -> str:
+def validate_listing_url(url: str, site: MarktplaatsSite = MARKTPLAATS) -> str:
     parts = urlsplit(url.strip())
-    if parts.scheme not in {"http", "https"} or parts.hostname not in MARKTPLAATS_HOSTS:
-        raise MarktplaatsError("invalid_url", "Not a marktplaats.nl listing URL")
+    if parts.scheme not in {"http", "https"} or parts.hostname not in site.hosts:
+        raise MarktplaatsError("invalid_url", f"Not a {site.label} listing URL")
     if not _ITEM_PATH.match(parts.path):
-        raise MarktplaatsError("invalid_url", "Not a marktplaats.nl listing URL")
-    return f"{BASE_URL}{parts.path}"
+        raise MarktplaatsError("invalid_url", f"Not a {site.label} listing URL")
+    return f"{site.base_url}{parts.path}"
 
 
 def fetch_listing(
@@ -130,14 +131,22 @@ def fetch_listing(
     *,
     fetch: Fetcher | None = None,
     image_size: str = DEFAULT_IMAGE_SIZE,
+    site: MarktplaatsSite = MARKTPLAATS,
 ) -> ListingDetail:
-    page_url = validate_listing_url(url)
-    page_html = (fetch or _http_fetch)(page_url, "text/html")
-    return parse_listing_page(page_html, url=page_url, image_size=image_size)
+    page_url = validate_listing_url(url, site)
+    if fetch is not None:
+        page_html = fetch(page_url, "text/html")
+    else:
+        page_html = _http_fetch(page_url, "text/html", site.label)
+    return parse_listing_page(page_html, url=page_url, image_size=image_size, site=site)
 
 
 def parse_listing_page(
-    page_html: str, *, url: str, image_size: str = DEFAULT_IMAGE_SIZE
+    page_html: str,
+    *,
+    url: str,
+    image_size: str = DEFAULT_IMAGE_SIZE,
+    site: MarktplaatsSite = MARKTPLAATS,
 ) -> ListingDetail:
     listing = _config_listing(page_html)
     item_id = listing.get("itemId")
@@ -176,7 +185,7 @@ def parse_listing_page(
         description_text=markup.description_text(),
         attribute_groups=attribute_groups,
         images=_gallery_images(listing.get("gallery") or {}, image_size),
-        seller=_seller(seller_raw),
+        seller=_seller(seller_raw, site.base_url),
         stats={
             key: value
             for key, value in (listing.get("stats") or {}).items()
@@ -187,7 +196,7 @@ def parse_listing_page(
             for item in listing.get("highlights") or []
             if isinstance(item, dict) and item.get("key")
         ],
-        city=location.get("cityName") or None,
+        city=_city_label(location.get("cityName"), site),
         postcode=location.get("postcode") or None,
         is_reserved=bool(listing.get("isReserved")),
         ad_type=listing.get("adType"),
@@ -292,14 +301,14 @@ def _image_url(base: str, image_size: str) -> str:
     return f"https:{url}" if url.startswith("//") else url
 
 
-def _seller(raw: dict[str, Any]) -> dict[str, Any]:
+def _seller(raw: dict[str, Any], base_url: str) -> dict[str, Any]:
     seller = {key: raw[key] for key in _SELLER_FIELDS if raw.get(key) not in (None, "")}
     if raw.get("phoneNumberHidden"):
         seller.pop("phoneNumber", None)
     for key in _SELLER_URL_FIELDS:
         value = raw.get(key)
         if isinstance(value, str) and value:
-            seller[key] = value if value.startswith("http") else f"{BASE_URL}{value}"
+            seller[key] = value if value.startswith("http") else f"{base_url}{value}"
     location = raw.get("location") or {}
     if location.get("cityName"):
         seller["city"] = location["cityName"]
