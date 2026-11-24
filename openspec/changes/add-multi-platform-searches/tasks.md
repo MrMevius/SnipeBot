@@ -37,3 +37,11 @@
 - [x] 6.1 Kleinanzeigen adapter: Astro island props (result ads, make/model menus), year/price/mileage/seller in the URL, all result pages newest first, top ads skipped, range and battery as post-filters.
 - [x] 6.2 Archive Kleinanzeigen listings (details, equipment, description, gallery photos, seller).
 - Earlier finding revisited: the 403 was Python's HTTP client; curl with SnipeBot's own user agent gets the regular pages, and robots.txt allows `/s-autos/` and `/s-anzeige/`.
+
+## 7. Variant filter (PR H)
+
+- [x] 7.1 Variant recognition for the Tesla Model 3 (2024+): title/version text, battery, power, drive, range; contradicting values ignored.
+- [x] 7.2 Power from the search data (AutoScout24/AutoTrack, ViaBOVAG, 2dehands); otherwise from the archived or fetched listing page, cached per listing (+ Alembic `20261125_0011`).
+- [x] 7.3 "Variant" filter in the search form, checked by SnipeBot on every platform; recognised variant shown with the listing.
+- [x] 7.4 Kleinanzeigen: offers only (wanted ads left out).
+- [ ] 7.5 Production: SR search → variant SR, LR search → LR RWD + LR AWD.

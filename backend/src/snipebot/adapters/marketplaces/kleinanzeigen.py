@@ -13,8 +13,8 @@ Astro's serialized form (``[type, value]`` pairs, see ``island_props``):
   models of a make (``/s-autos/<make>/c216+autos.marke_s:<make>``); an item's
   URL ends with the ``autos.marke_s``/``autos.model_s`` filter it selects.
 
-A search URL holds the make, model, price, first registration year, mileage,
-seller type, page (25 results, the site serves at most 50 pages) and the
+A search URL holds the make, model, offers only (no wanted ads), price, first
+registration year, mileage, seller type, page (25 results, the site serves at most 50 pages) and the
 newest-first order. Kleinanzeigen has no range or battery filter, so SnipeBot
 checks those itself; battery capacity only comes from the title or the start
 of the description, range is never stated.
@@ -167,7 +167,8 @@ def search_url(query: dict[str, Any], page: int = 1) -> str:
     make, model = query["make"], query["model"]
     if not (_SLUG.match(make) and _SLUG.match(model)):
         raise KleinanzeigenError("invalid_filter", "Unexpected Kleinanzeigen make or model")
-    segments = [make]
+    # Offers only: "Gesuche" ("Suche Tesla Model 3") are wanted ads.
+    segments = [make, "anzeige:angebote"]
     if query.get("poster") in _POSTER.values():
         segments.append(f"anbieter:{query['poster']}")
     price = query.get("price")

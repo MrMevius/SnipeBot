@@ -330,3 +330,52 @@ def test_distances_from_home() -> None:
     page = Scout24Client(AUTOSCOUT24, fetch=fake, home=daarle).search({"cat": "ma1mo2"})
     assert "zip=7683&zipc=NL&zipr=2000" in fake.requests[-1]
     assert page.listings[0].distance_meters == 182_000
+
+
+def test_variant_filter_is_checked_by_snipebot() -> None:
+    _reset()
+    adapters = _adapters()
+    notifier = CollectingNotifier()
+    with get_session_factory()() as session:
+        search = create_search(
+            session,
+            adapters,
+            owner_id="local",
+            name="Model 3 SR",
+            filters=SearchFilters(make="Tesla", model="Model 3", year_min=2024, variants=["sr"]),
+            platforms=["autotrack"],
+            exclude_keywords=[],
+            seller_type="all",
+            alert_max_price=Decimal("35000"),
+            unknown_policy="exclude",
+        )
+        assert [source.post_filters_json for source in search.sources] == ['["variant"]']
+
+    adapters["autotrack"].pages.append(
+        SearchPage(
+            3,
+            [
+                car("autotrack", "at-1", title="Tesla Model 3 Standard Range"),
+                car("autotrack", "at-2", title="Tesla Model 3 Long Range AWD"),
+                # Unknown from the search data; its page cannot be fetched here.
+                car("autotrack", "at-3", title="Tesla Model 3"),
+            ],
+            complete=True,
+        )
+    )
+    _run(adapters, notifier)
+    rows = _rows()
+    assert sorted(rows) == ["at-1"]
+    assert '"variant": "sr"' in rows["at-1"].attributes_json
+
+    adapters["autotrack"].pages.append(
+        SearchPage(
+            2,
+            [car("autotrack", "at-4", title="Tesla Model 3 RWD", specs={"power": 208}), car("autotrack", "at-1", title="Tesla Model 3 Standard Range")],
+            complete=True,
+        )
+    )
+    _run(adapters, notifier)
+    assert [message.title for message in notifier.messages] == [
+        "🆕 Nieuwe advertentie — Model 3 SR"
+    ]

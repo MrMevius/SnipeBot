@@ -59,6 +59,7 @@ from snipebot.core.config import Settings
 from snipebot.core.metrics import metrics
 from snipebot.domain.marketplace_archive import (
     ARCHIVE_MARKETPLACES,
+    build_sources,
     mark_listings_missing,
     observe_listings,
 )
@@ -68,6 +69,11 @@ from snipebot.domain.search_filters import (
     check_listing,
     describe_filters,
     validate_filters,
+)
+from snipebot.domain.variant_resolution import (
+    MAX_FETCHES_PER_CHECK,
+    apply_search_data,
+    resolve_variants,
 )
 from snipebot.notifications.factory import build_notifier
 from snipebot.notifications.models import NotificationMessage
@@ -219,11 +225,13 @@ def preview_search(
     for key in platforms:
         adapter = adapters[key]
         try:
-            built = adapter.build_query(filters, seller_type)
+            built = _platform_query(adapter, filters, seller_type)
             page = adapter.search(built.query, limit=20)
         except MarketplaceError as exc:
             results.append(PlatformPreview(key, None, [], [], str(exc)))
             continue
+        if "variant" in built.post_filters:
+            apply_search_data(page.listings)
         sample = [
             listing
             for listing in page.listings
@@ -614,6 +622,16 @@ def check_source(
     filters = get_search_filters(search)
     post_filters = get_post_filters(source) if filters is not None else []
 
+    if "variant" in post_filters:
+        source_for_pages = build_sources(settings).get(source.marketplace)
+        resolve_variants(
+            db_session,
+            source.marketplace,
+            [listing for listing in page.listings if not _is_excluded(listing, keywords)],
+            fetch_detail=source_for_pages.fetch_detail if source_for_pages else None,
+            max_fetches=None if baseline else MAX_FETCHES_PER_CHECK,
+        )
+
     page_ids = {listing.item_id for listing in page.listings}
     matching: list[Listing] = []
     unknown_by_id: dict[str, list[str]] = {}
@@ -790,7 +808,15 @@ def _validate_seller_type(seller_type: str | None) -> None:
 def _build_queries(
     adapters: Adapters, filters: SearchFilters, platforms: list[str], seller_type: str
 ) -> dict[str, PlatformQuery]:
-    return {key: adapters[key].build_query(filters, seller_type) for key in platforms}
+    return {key: _platform_query(adapters[key], filters, seller_type) for key in platforms}
+
+
+def _platform_query(adapter: PlatformAdapter, filters: SearchFilters, seller_type: str) -> PlatformQuery:
+    """The platform's query; no platform filters on the variant, SnipeBot checks it."""
+    built = adapter.build_query(filters, seller_type)
+    if filters.variants and "variant" not in built.post_filters:
+        built = PlatformQuery(query=built.query, post_filters=[*built.post_filters, "variant"])
+    return built
 
 
 def _new_source(key: str, built: PlatformQuery, now: datetime) -> MarketplaceSearchSource:

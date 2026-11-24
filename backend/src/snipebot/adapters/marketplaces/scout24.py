@@ -43,6 +43,7 @@ from snipebot.adapters.marketplaces.base import (
     TaxonomyOption,
     TtlCache,
     find_option,
+    power_kw,
 )
 
 IMAGE_HOSTS = {"prod.pictures.autoscout24.net"}
@@ -340,6 +341,9 @@ def parse_listing(raw: Any, site: Scout24Site) -> Listing | None:
             number = _NUMBER.search(str(detail.get("data") or "").replace(".", ""))
             if number:
                 specs["range"] = int(number.group(0))
+        if isinstance(detail, dict) and detail.get("iconName") == "speedometer":
+            if (kw := power_kw(detail.get("data"))) is not None:
+                specs["power"] = kw
     battery = battery_kwh(title)
     if battery is not None:
         specs["battery"] = battery

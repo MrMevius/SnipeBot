@@ -532,3 +532,25 @@ class MarketplaceItemPrice(Base):
     )
 
     item: Mapped[MarketplaceItem] = relationship(back_populates="prices")
+
+
+class MarketplaceVariantCache(Base):
+    """Variant(s) a listing can be, resolved from its listing page (see ``car_variants``).
+
+    Kept per listing so a page is fetched once, also for listings that the
+    variant filter leaves out (those are not archived).
+    """
+
+    __tablename__ = "marketplace_variant_cache"
+    __table_args__ = (
+        UniqueConstraint("marketplace", "item_id", name="uq_marketplace_variant_cache"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    marketplace: Mapped[str] = mapped_column(String(32), nullable=False)
+    item_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Title the variants were resolved for; a changed title resolves again.
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Comma-separated variant keys; None when the page did not tell.
+    variants: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

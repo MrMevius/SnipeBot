@@ -542,6 +542,7 @@ export type SearchFilters = {
   range_min: number | null;
   battery_min: number | null;
   battery_max: number | null;
+  variants?: string[] | null;
 };
 
 export type PlatformInfo = { key: string; label: string };

@@ -129,7 +129,7 @@ def test_taxonomy_and_query() -> None:
     }
     assert built.post_filters == ["battery"]
     assert search_url(built.query, 2) == (
-        f"{BASE}/s-autos/tesla/anbieter:privat/preis::30000/seite:2/sortierung:neuste/"
+        f"{BASE}/s-autos/tesla/anzeige:angebote/anbieter:privat/preis::30000/seite:2/sortierung:neuste/"
         "c216+autos.ez_i:2020%2C+autos.km_i:%2C150000+autos.marke_s:tesla+autos.model_s:model_3"
     )
     everyone = adapter.build_query(SearchFilters(make="Tesla", model="Model 3"), "all")
