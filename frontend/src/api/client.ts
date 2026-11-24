@@ -553,6 +553,13 @@ export type MarketplaceSearch = {
   last_total_count: number | null;
   listing_count: number;
   new_listing_count: number;
+  cheapest: {
+    item_id: string;
+    title: string;
+    url: string;
+    price: number;
+    archive_id: number | null;
+  } | null;
   created_at: string;
 };
 

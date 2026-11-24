@@ -26,6 +26,13 @@ const savedSearch = {
   last_total_count: 86,
   listing_count: 2,
   new_listing_count: 1,
+  cheapest: {
+    item_id: "m300",
+    title: "Volkswagen Golf 300",
+    url: "https://www.marktplaats.nl/v/m300",
+    price: 21000,
+    archive_id: 3,
+  },
   created_at: "2026-11-23T09:00:00Z",
 };
 
@@ -137,6 +144,9 @@ describe("Marktplaats searches", () => {
     const row = (await screen.findByTestId("search-row-7")).textContent ?? "";
     expect(row).toContain("1 new");
     expect(row.replace(/\s/g, " ")).toContain("Alerts ≤ € 45.000");
+    const cheapest = screen.getByTestId("search-cheapest-7");
+    expect(cheapest.textContent?.replace(/\s/g, " ")).toContain("€ 21.000");
+    expect(cheapest.querySelector("a")?.getAttribute("href")).toBe("/archive/3");
   });
 
   it("shows listings of a search with new and price-drop markers", async () => {

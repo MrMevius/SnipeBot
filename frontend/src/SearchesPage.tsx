@@ -348,6 +348,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
                   <th>Search</th>
                   <th>Filters</th>
                   <th>Listings</th>
+                  <th>Cheapest</th>
                   <th>Status</th>
                   <th>Last check</th>
                   <th>Actions</th>
@@ -375,6 +376,40 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
                       {search.listing_count}
                       {search.new_listing_count > 0 && (
                         <span className="pill search-new-pill">{search.new_listing_count} new</span>
+                      )}
+                    </td>
+                    <td data-testid={`search-cheapest-${search.id}`}>
+                      {search.cheapest ? (
+                        <>
+                          <strong>{formatEuro(search.cheapest.price)}</strong>
+                          <div className="compact-cell-sub search-cheapest-title">
+                            {search.cheapest.archive_id ? (
+                              <a
+                                href={`/archive/${search.cheapest.archive_id}`}
+                                className="product-link"
+                                title={search.cheapest.title}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  onNavigate(`/archive/${search.cheapest?.archive_id}`);
+                                }}
+                              >
+                                {search.cheapest.title}
+                              </a>
+                            ) : (
+                              <a
+                                href={search.cheapest.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="product-link"
+                                title={search.cheapest.title}
+                              >
+                                {search.cheapest.title}
+                              </a>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="muted">–</span>
                       )}
                     </td>
                     <td>
