@@ -728,91 +728,169 @@ type SupportedWebshop = {
   siteKey: string;
   label: string;
   domain: string;
-  instructions: string[];
+  note: string;
 };
 
+// Webshops for the price watchlist: paste the product URL in Add product.
 const SUPPORTED_WEBSHOPS: SupportedWebshop[] = [
-  {
-    siteKey: "hema",
-    label: "HEMA",
-    domain: "hema.nl",
-    instructions: [
-      "Open het product op hema.nl en kopieer de volledige product-URL.",
-      "Ga in SnipeBot naar Add product en plak de URL.",
-      "Sla het item op en zet optioneel een targetprijs voor alerts.",
-    ],
-  },
-  {
-    siteKey: "amazon_nl",
-    label: "Amazon NL",
-    domain: "amazon.nl",
-    instructions: [
-      "Open het product op amazon.nl en kopieer de product-URL.",
-      "Voeg de URL toe via Add product in SnipeBot.",
-      "Controleer de preview en sla daarna op in je watchlist.",
-    ],
-  },
-  {
-    siteKey: "aliexpress",
-    label: "AliExpress",
-    domain: "aliexpress.com",
-    instructions: [
-      "Open de productpagina op aliexpress.com en kopieer de URL.",
-      "Plak de URL in Add product en voeg een label toe als dat helpt.",
-      "Klik Add to watchlist en stel desgewenst direct een target in.",
-    ],
-  },
-  {
-    siteKey: "lidl_nl",
-    label: "Lidl NL",
-    domain: "lidl.nl",
-    instructions: [
-      "Open de productpagina op lidl.nl en kopieer de product-URL.",
-      "Plak de URL in Add product en controleer de preview.",
-      "Sla het product op in je watchlist.",
-    ],
-  },
+  { siteKey: "hema", label: "HEMA", domain: "hema.nl", note: "Volledige product-URL; target optioneel." },
+  { siteKey: "amazon_nl", label: "Amazon NL", domain: "amazon.nl", note: "Controleer de preview voor het opslaan." },
+  { siteKey: "aliexpress", label: "AliExpress", domain: "aliexpress.com", note: "Een eigen label helpt bij lange producttitels." },
+  { siteKey: "lidl_nl", label: "Lidl NL", domain: "lidl.nl", note: "Controleer de preview voor het opslaan." },
 ];
+
+type CarSiteStatus = "live" | "available" | "planned";
 
 type SupportedCarSite = {
   siteKey: string;
   label: string;
   domain: string;
-  facts: string[];
+  status: CarSiteStatus;
+  countries: string;
+  sellers: string;
+  filters: string;
+  note: string;
 };
 
-// Platforms for car searches (Searches page); see backend/src/snipebot/adapters/marketplaces.
+const CAR_SITE_STATUS: Record<CarSiteStatus, { label: string; tone: string }> = {
+  live: { label: "Live", tone: "ok" },
+  available: { label: "Beschikbaar", tone: "neutral" },
+  planned: { label: "Gepland", tone: "pending" },
+};
+
+// Platforms for car searches (backend/src/snipebot/adapters/marketplaces). "planned" rows are
+// candidates: the largest Dutch and (for import, left-hand drive) European car sites, not yet
+// examined for page data, filters or robots.txt.
 const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
   {
     siteKey: "marktplaats",
     label: "Marktplaats",
     domain: "marktplaats.nl",
-    facts: [
-      "Nederland · particulieren en bedrijven.",
-      "Filtert zelf op alle SnipeBot-filters (bouwjaar, prijs, km-stand, actieradius, accucapaciteit, verkoper).",
-      "Elke controle leest de nieuwste 100 advertenties.",
-    ],
+    status: "live",
+    countries: "NL",
+    sellers: "Particulier + bedrijf",
+    filters: "Alle filters door de site",
+    note: "Leest per controle de nieuwste 100 advertenties.",
   },
   {
     siteKey: "autoscout24",
     label: "AutoScout24",
     domain: "autoscout24.nl",
-    facts: [
-      "Nederland, België en Duitsland · dealers en particulieren.",
-      "Filtert zelf op bouwjaar, prijs, km-stand en verkoper. Actieradius en accucapaciteit controleert SnipeBot zelf; kies per zoekopdracht wat er gebeurt als een advertentie die waarde niet noemt (Value not stated).",
-      "Buitenlandse auto's tonen het land bij de plaats, bijv. Dilbeek (BE); de prijs is zonder Nederlandse BPM en importkosten.",
-      "Bevat alle AutoTrack-advertenties met hetzelfde id.",
-    ],
+    status: "live",
+    countries: "NL, BE, DE",
+    sellers: "Particulier + dealer",
+    filters: "Actieradius en accucapaciteit door SnipeBot",
+    note: "Buitenland: land bij de plaats, prijs zonder BPM/import. Bevat alle AutoTrack-advertenties.",
   },
   {
     siteKey: "autotrack",
     label: "AutoTrack",
     domain: "autotrack.nl",
-    facts: [
-      "Nederland · alleen dealers (niet bruikbaar met 'Private only').",
-      "Filtert zelf op bouwjaar, prijs en km-stand; actieradius en accucapaciteit controleert SnipeBot zelf.",
-      "Alle advertenties staan ook op AutoScout24; kies bij voorkeur AutoScout24. Wisselen van AutoTrack naar AutoScout24 behoudt advertenties, prijshistorie en archief.",
-    ],
+    status: "available",
+    countries: "NL",
+    sellers: "Alleen dealer",
+    filters: "Actieradius en accucapaciteit door SnipeBot",
+    note: "Alles staat ook op AutoScout24; daar heeft AutoScout24 de voorkeur.",
+  },
+  {
+    siteKey: "gaspedaal",
+    label: "Gaspedaal",
+    domain: "gaspedaal.nl",
+    status: "planned",
+    countries: "NL",
+    sellers: "Particulier + dealer",
+    filters: "Nog te onderzoeken",
+    note: "Zoekmachine over andere occasionsites: veel dubbelen met wat al gekoppeld is.",
+  },
+  {
+    siteKey: "autoweek",
+    label: "AutoWeek Occasions",
+    domain: "autoweek.nl",
+    status: "planned",
+    countries: "NL",
+    sellers: "Vooral dealer",
+    filters: "Nog te onderzoeken",
+    note: "Occasionaanbod van het automagazine.",
+  },
+  {
+    siteKey: "viabovag",
+    label: "ViaBOVAG",
+    domain: "viabovag.nl",
+    status: "planned",
+    countries: "NL",
+    sellers: "BOVAG-dealer",
+    filters: "Nog te onderzoeken",
+    note: "Alleen BOVAG-bedrijven, met garantie.",
+  },
+  {
+    siteKey: "autotrader_nl",
+    label: "Autotrader",
+    domain: "autotrader.nl",
+    status: "planned",
+    countries: "NL",
+    sellers: "Particulier + dealer",
+    filters: "Nog te onderzoeken",
+    note: "",
+  },
+  {
+    siteKey: "anwb_occasions",
+    label: "ANWB Occasions",
+    domain: "anwb.nl",
+    status: "planned",
+    countries: "NL",
+    sellers: "Dealer",
+    filters: "Nog te onderzoeken",
+    note: "Occasions van aangesloten dealers.",
+  },
+  {
+    siteKey: "mobile_de",
+    label: "mobile.de",
+    domain: "mobile.de",
+    status: "planned",
+    countries: "DE",
+    sellers: "Particulier + dealer",
+    filters: "Nog te onderzoeken",
+    note: "Grootste automarkt van Duitsland; prijzen zonder BPM/import.",
+  },
+  {
+    siteKey: "kleinanzeigen",
+    label: "Kleinanzeigen",
+    domain: "kleinanzeigen.de",
+    status: "planned",
+    countries: "DE",
+    sellers: "Vooral particulier",
+    filters: "Nog te onderzoeken",
+    note: "Duitse tegenhanger van Marktplaats.",
+  },
+  {
+    siteKey: "2dehands",
+    label: "2dehands / 2ememain",
+    domain: "2dehands.be",
+    status: "planned",
+    countries: "BE",
+    sellers: "Particulier + bedrijf",
+    filters: "Nog te onderzoeken",
+    note: "Zelfde platform als Marktplaats: waarschijnlijk de eenvoudigste koppeling.",
+  },
+  {
+    siteKey: "leboncoin",
+    label: "leboncoin",
+    domain: "leboncoin.fr",
+    status: "planned",
+    countries: "FR",
+    sellers: "Particulier + dealer",
+    filters: "Nog te onderzoeken",
+    note: "Grootste advertentiesite van Frankrijk.",
+  },
+  {
+    siteKey: "lacentrale",
+    label: "La Centrale",
+    domain: "lacentrale.fr",
+    status: "planned",
+    countries: "FR",
+    sellers: "Particulier + dealer",
+    filters: "Nog te onderzoeken",
+    note: "Grootste Franse site specifiek voor auto's.",
   },
 ];
 
@@ -2202,51 +2280,80 @@ export function App() {
       {menuView === "supported-shops" ? (
         <section className="panel supported-shops-panel" data-testid="supported-shops-panel">
           <h2>Supported sites</h2>
+
           <h3>Webshops</h3>
           <p className="muted">
-            Deze webshops worden ondersteund voor de prijs-watchlist. Gebruik per shop de korte stappen hieronder.
+            Voor de prijs-watchlist: kopieer de product-URL, plak die in <strong>Add product</strong>,
+            controleer de preview en sla op (target optioneel).
           </p>
-
-          <div className="supported-shops-grid">
-            {SUPPORTED_WEBSHOPS.map((shop) => (
-              <article key={shop.siteKey} className="supported-shop-card" data-testid={`shop-card-${shop.siteKey}`}>
-                <header className="supported-shop-head">
-                  <strong>{shop.label}</strong>
-                  <span className="supported-shop-key">{shop.siteKey}</span>
-                </header>
-                <div className="muted">Domain: {shop.domain}</div>
-                <ol>
-                  {shop.instructions.map((step) => (
-                    <li key={step}>{step}</li>
-                  ))}
-                </ol>
-              </article>
-            ))}
+          <div className="watchlist-table-scroll">
+            <table className="compact-table supported-sites-table">
+              <thead>
+                <tr>
+                  <th>Shop</th>
+                  <th>Domein</th>
+                  <th>Key</th>
+                  <th>Tip</th>
+                </tr>
+              </thead>
+              <tbody>
+                {SUPPORTED_WEBSHOPS.map((shop) => (
+                  <tr key={shop.siteKey} data-testid={`shop-card-${shop.siteKey}`}>
+                    <td>
+                      <strong>{shop.label}</strong>
+                    </td>
+                    <td>{shop.domain}</td>
+                    <td className="supported-shop-key">{shop.siteKey}</td>
+                    <td className="muted">{shop.note}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
 
           <h3>Occasion websites</h3>
           <p className="muted">
             Voor auto-zoekopdrachten: open <strong>Searches</strong>, kies merk en model, vink de
-            websites aan en stel de filters en het prijsplafond in. SnipeBot controleert elke website
-            ongeveer elke 10 minuten, meldt nieuwe auto's en prijsdalingen via Telegram en bewaart elke
-            advertentie met foto's in het <strong>Archive</strong>. Dezelfde auto op meerdere websites
-            wordt herkend aan het kenteken.
+            websites aan en stel filters en prijsplafond in. SnipeBot controleert elke website ongeveer
+            elke 10 minuten, meldt nieuwe auto's en prijsdalingen via Telegram en bewaart elke advertentie
+            met foto's in het <strong>Archive</strong>. Dezelfde auto op meerdere websites wordt herkend aan
+            het kenteken. Filters die een website niet zelf kan toepassen controleert SnipeBot; wat er
+            gebeurt als een advertentie de waarde niet noemt, stel je per zoekopdracht in (Value not stated).
+            <em> Gepland</em> zijn de grootste Nederlandse en Europese autosites die nog gekoppeld kunnen
+            worden; de keuze is een inschatting en per site moet nog onderzocht worden of koppelen kan.
           </p>
-          <div className="supported-shops-grid">
-            {SUPPORTED_CAR_SITES.map((site) => (
-              <article key={site.siteKey} className="supported-shop-card" data-testid={`car-site-card-${site.siteKey}`}>
-                <header className="supported-shop-head">
-                  <strong>{site.label}</strong>
-                  <span className="supported-shop-key">{site.siteKey}</span>
-                </header>
-                <div className="muted">Domain: {site.domain}</div>
-                <ul>
-                  {site.facts.map((fact) => (
-                    <li key={fact}>{fact}</li>
-                  ))}
-                </ul>
-              </article>
-            ))}
+          <div className="watchlist-table-scroll">
+            <table className="compact-table supported-sites-table">
+              <thead>
+                <tr>
+                  <th>Website</th>
+                  <th>Status</th>
+                  <th>Landen</th>
+                  <th>Verkopers</th>
+                  <th>Filters</th>
+                  <th>Opmerking</th>
+                </tr>
+              </thead>
+              <tbody>
+                {SUPPORTED_CAR_SITES.map((site) => (
+                  <tr key={site.siteKey} data-testid={`car-site-card-${site.siteKey}`}>
+                    <td>
+                      <strong>{site.label}</strong>
+                      <div className="compact-cell-sub muted">{site.domain}</div>
+                    </td>
+                    <td>
+                      <span className={`status-badge status-${CAR_SITE_STATUS[site.status].tone}`}>
+                        {CAR_SITE_STATUS[site.status].label}
+                      </span>
+                    </td>
+                    <td>{site.countries}</td>
+                    <td>{site.sellers}</td>
+                    <td>{site.filters}</td>
+                    <td className="muted">{site.note || "–"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
       ) : null}
