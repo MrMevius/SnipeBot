@@ -128,7 +128,12 @@ describe("App", () => {
     expect(screen.getByTestId("car-site-card-autoscout24").textContent).toContain("NL, BE, DE");
     expect(screen.getByTestId("car-site-card-autoscout24").textContent).toContain("Live");
     expect(screen.getByTestId("car-site-card-mobile_de").textContent).toContain("Niet mogelijk");
-    expect(screen.getByTestId("car-site-card-leboncoin").textContent).toContain("Gepland");
+    expect(screen.getByTestId("car-site-card-leboncoin").textContent).toContain("Niet mogelijk");
+    expect(screen.getByTestId("car-site-card-autohero").textContent).toContain("Gepland");
+    // Connected sites first, then the others by supply, largest first.
+    const order = screen.getAllByTestId(/^car-site-card-/).map((row) => row.getAttribute("data-testid")?.slice(14));
+    expect(order.slice(5, 11)).toEqual(["autotrack", "mobile_de", "leboncoin", "lacentrale", "autowereld", "anwb_occasions"]);
+    expect(screen.getByTestId("car-site-card-mobile_de").textContent).toContain("± 1.400.000");
     expect(screen.getByTestId("car-site-card-2dehands").textContent).toContain("Live");
     expect(screen.getByTestId("car-site-card-viabovag").textContent).toContain("Live");
     expect(screen.getByTestId("car-site-card-kleinanzeigen").textContent).toContain("Live");

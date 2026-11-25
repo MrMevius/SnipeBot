@@ -750,6 +750,9 @@ type SupportedCarSite = {
   sellers: string;
   filters: string;
   note: string;
+  // Approximate number of cars on offer (public figure), for sites not yet connected.
+  supply?: number;
+  supplyNote?: string;
 };
 
 const CAR_SITE_STATUS: Record<CarSiteStatus, { label: string; tone: string }> = {
@@ -759,9 +762,9 @@ const CAR_SITE_STATUS: Record<CarSiteStatus, { label: string; tone: string }> = 
   blocked: { label: "Niet mogelijk", tone: "error" },
 };
 
-// Platforms for car searches (backend/src/snipebot/adapters/marketplaces). "planned" rows are
-// candidates: the largest Dutch and (for import, left-hand drive) European car sites, not yet
-// examined for page data, filters or robots.txt.
+// Platforms for car searches (backend/src/snipebot/adapters/marketplaces). Sites that are not
+// connected are probed with curl under SnipeBot's own user agent (2026-11-25); "planned" ones
+// answer and may be connectable. Their supply is a public figure (site or press, date varies).
 const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
   {
     siteKey: "marktplaats",
@@ -832,6 +835,7 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     sellers: "Particulier + dealer",
     filters: "Nog te onderzoeken",
     note: "Zoekmachine over andere occasionsites: vrijwel alleen dubbelen; niet gepland.",
+    supplyNote: "onbekend; telt het aanbod van andere sites",
   },
   {
     siteKey: "autoweek",
@@ -842,6 +846,7 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     sellers: "Vooral dealer",
     filters: "Nog te onderzoeken",
     note: "Blokkeert SnipeBot (HTTP 403); niet te koppelen.",
+    supplyNote: "onbekend",
   },
   {
     siteKey: "autotrader_nl",
@@ -852,6 +857,7 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     sellers: "Particulier + dealer",
     filters: "Nog te onderzoeken",
     note: "Zelfde AutoScout24-platform en advertenties als AutoScout24; levert niets nieuws.",
+    supplyNote: "onbekend; zelfde advertenties als AutoScout24",
   },
   {
     siteKey: "anwb_occasions",
@@ -862,6 +868,8 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     sellers: "Dealer",
     filters: "Nog te onderzoeken",
     note: "Geen bruikbare zoekpagina gevonden.",
+    supply: 165000,
+    supplyNote: "meer dan 165.000 auto's (ANWB)",
   },
   {
     siteKey: "mobile_de",
@@ -872,28 +880,86 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     sellers: "Particulier + dealer",
     filters: "Nog te onderzoeken",
     note: "Blokkeert SnipeBot (HTTP 403) en verbiedt zoekpagina's in robots.txt; niet te koppelen.",
+    supply: 1400000,
+    supplyNote: "1,2–1,6 mln voertuigen (mobile.de / Adevinta)",
   },
   {
     siteKey: "leboncoin",
     label: "leboncoin",
     domain: "leboncoin.fr",
-    status: "planned",
+    status: "blocked",
     countries: "FR",
     sellers: "Particulier + dealer",
     filters: "Nog te onderzoeken",
-    note: "Grootste advertentiesite van Frankrijk.",
+    note: "Grootste advertentiesite van Frankrijk. Captcha (DataDome) voor SnipeBot en robots.txt verbiedt zoekpagina's; niet te koppelen.",
+    supply: 700000,
+    supplyNote: "meer dan 700.000 auto's (ruim 2× La Centrale, CapCar)",
   },
   {
     siteKey: "lacentrale",
     label: "La Centrale",
     domain: "lacentrale.fr",
-    status: "planned",
+    status: "blocked",
     countries: "FR",
     sellers: "Particulier + dealer",
     filters: "Nog te onderzoeken",
-    note: "Grootste Franse site specifiek voor auto's.",
+    note: "Grootste Franse site specifiek voor auto's. Captcha (DataDome) voor SnipeBot en robots.txt verbiedt zoekpagina's; niet te koppelen.",
+    supply: 354000,
+    supplyNote: "ca. 354.000 auto's (CapCar)",
+  },
+  {
+    siteKey: "autowereld",
+    label: "AutoWereld",
+    domain: "autowereld.nl",
+    status: "blocked",
+    countries: "NL",
+    sellers: "Vooral dealer",
+    filters: "Nog te onderzoeken",
+    note: "Blokkeert SnipeBot (HTTP 403); niet te koppelen.",
+    supply: 347000,
+    supplyNote: "ruim 347.000 auto's (AutoWereld)",
+  },
+  {
+    siteKey: "gocar",
+    label: "Gocar",
+    domain: "gocar.be",
+    status: "blocked",
+    countries: "BE",
+    sellers: "Particulier + dealer",
+    filters: "Nog te onderzoeken",
+    note: "Blokkeert SnipeBot (HTTP 403); niet te koppelen.",
+    supplyNote: "onbekend",
+  },
+  {
+    siteKey: "autohero",
+    label: "Autohero",
+    domain: "autohero.com",
+    status: "planned",
+    countries: "NL, BE, DE",
+    sellers: "Alleen Autohero (eigen voorraad)",
+    filters: "Nog te onderzoeken",
+    note: "Laat SnipeBot toe en robots.txt staat zoeken toe, maar de pagina laadt de advertenties pas in de browser: koppelen kan alleen via hun data-API (nog te onderzoeken).",
+    supplyNote: "onbekend",
+  },
+  {
+    siteKey: "tesla",
+    label: "Tesla (gebruikt)",
+    domain: "tesla.com",
+    status: "blocked",
+    countries: "NL, BE, DE",
+    sellers: "Alleen Tesla",
+    filters: "Nog te onderzoeken",
+    note: "Blokkeert SnipeBot overal (HTTP 403), ook robots.txt; niet te koppelen.",
+    supplyNote: "onbekend; alleen Tesla's",
   },
 ];
+
+// Connected sites first (in this order), then the others by supply, largest first.
+const SORTED_CAR_SITES = [...SUPPORTED_CAR_SITES].sort((a, b) => {
+  const connected = (site: SupportedCarSite) => site.status === "live" || site.status === "available";
+  if (connected(a) || connected(b)) return Number(connected(b)) - Number(connected(a));
+  return (b.supply ?? -1) - (a.supply ?? -1);
+});
 
 const SORT_BY_COLUMN: Record<SortableColumn, { asc: SortOption; desc: SortOption }> = {
   product: { asc: "label_asc", desc: "label_desc" },
@@ -2317,11 +2383,11 @@ export function App() {
             Voor auto-zoekopdrachten: open <strong>Car searches</strong>, kies merk en model, vink de
             websites aan en stel filters en prijsplafond in. SnipeBot controleert elke website ongeveer
             elke 10 minuten, meldt nieuwe auto's en prijsdalingen via Telegram en bewaart elke advertentie
-            met foto's in het <strong>Archive</strong>. Dezelfde auto op meerdere websites wordt herkend aan
-            het kenteken. Filters die een website niet zelf kan toepassen controleert SnipeBot; wat er
+            met foto's in het <strong>Archive</strong>. Dezelfde auto op meerdere websites wordt samengevoegd
+            (zelfde bouwjaar, kilometerstand, plaats en vrijwel dezelfde prijs). Filters die een website niet zelf kan toepassen controleert SnipeBot; wat er
             gebeurt als een advertentie de waarde niet noemt, stel je per zoekopdracht in (Value not stated).
-            <em> Gepland</em> zijn de grootste Nederlandse en Europese autosites die nog gekoppeld kunnen
-            worden; de keuze is een inschatting en per site moet nog onderzocht worden of koppelen kan.
+            Sites die nog niet gekoppeld zijn staan gesorteerd op aanbod (openbare opgave, peildatum
+            verschilt). <em> Gepland</em> zijn sites die SnipeBot toelaten en mogelijk te koppelen zijn;
             <em> Niet mogelijk</em> zijn sites die SnipeBot weigeren of niets nieuws opleveren.
           </p>
           <div className="watchlist-table-scroll">
@@ -2333,11 +2399,12 @@ export function App() {
                   <th>Landen</th>
                   <th>Verkopers</th>
                   <th>Filters</th>
+                  <th className="num">Aanbod</th>
                   <th>Opmerking</th>
                 </tr>
               </thead>
               <tbody>
-                {SUPPORTED_CAR_SITES.map((site) => (
+                {SORTED_CAR_SITES.map((site) => (
                   <tr key={site.siteKey} data-testid={`car-site-card-${site.siteKey}`}>
                     <td>
                       <strong>{site.label}</strong>
@@ -2351,6 +2418,10 @@ export function App() {
                     <td>{site.countries}</td>
                     <td>{site.sellers}</td>
                     <td>{site.filters}</td>
+                    <td className="num">
+                      {site.supply ? `± ${site.supply.toLocaleString("nl-NL")}` : site.status === "live" || site.status === "available" ? "–" : "?"}
+                      {site.supplyNote && <div className="compact-cell-sub muted">{site.supplyNote}</div>}
+                    </td>
                     <td className="muted">{site.note || "–"}</td>
                   </tr>
                 ))}
