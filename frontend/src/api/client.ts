@@ -652,6 +652,18 @@ export type MarketplaceListing = {
   gone_at: string | null;
   price_history: { price: number; observed_at: string }[];
   archive_id: number | null;
+  // The same car on other platforms (matched on year, mileage, place and price).
+  also_listed?: AlsoListed[];
+};
+
+export type AlsoListed = {
+  id: number;
+  marketplace: string;
+  item_id: string;
+  url: string;
+  current_price: number | null;
+  city: string | null;
+  gone_at: string | null;
 };
 
 export async function fetchSearchPlatforms(): Promise<PlatformInfo[]> {

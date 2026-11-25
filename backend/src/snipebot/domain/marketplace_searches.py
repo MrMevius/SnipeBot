@@ -64,6 +64,7 @@ from snipebot.domain.marketplace_archive import (
     observe_listings,
 )
 from snipebot.domain.price_checks import resolve_notification_settings
+from snipebot.domain.same_car import group_same_cars, same_car
 from snipebot.domain.search_filters import (
     FILTER_LABELS,
     check_listing,
@@ -459,22 +460,39 @@ def list_search_listings(
 
 
 def search_listing_counts(db_session: Session, search: MarketplaceSearch) -> tuple[int, int]:
-    """Return (visible listings, new listings) for overview display."""
-    rows = db_session.execute(
-        select(
-            MarketplaceListing.from_baseline,
-            MarketplaceListing.first_seen_at,
-            MarketplaceListing.gone_at,
-        ).where(MarketplaceListing.search_id == search.id)
-    ).all()
+    """Return (visible cars, new cars) for overview display; a car on several platforms counts once."""
+    cars = list_search_cars(db_session, search)
     now = datetime.now(UTC)
-    visible = sum(1 for row in rows if row.gone_at is None)
-    new = sum(
-        1
-        for row in rows
-        if row.gone_at is None and _is_new(row.from_baseline, row.first_seen_at, now)
+    visible = [car for car in cars if car[0].gone_at is None]
+    new = sum(1 for car in visible if is_listing_new(earliest_listing(car), now))
+    return len(visible), new
+
+
+def list_search_cars(
+    db_session: Session, search: MarketplaceSearch
+) -> list[list[MarketplaceListing]]:
+    """Listings grouped per car (``same_car``); the main listing first.
+
+    The main listing is the cheapest one still online; the car counts as new
+    and as seen from the moment its first listing was found.
+    """
+    cars = []
+    for group in group_same_cars(list_search_listings(db_session, search)):
+        group.sort(key=_main_listing_order)
+        cars.append(group)
+    cars.sort(
+        key=lambda group: (group[0].gone_at is not None, -_aware(earliest_listing(group).first_seen_at).timestamp())
     )
-    return visible, new
+    return cars
+
+
+def earliest_listing(group: list[MarketplaceListing]) -> MarketplaceListing:
+    return min(group, key=lambda row: (_aware(row.first_seen_at), row.id))
+
+
+def _main_listing_order(row: MarketplaceListing) -> tuple:
+    price = row.current_price if row.current_price is not None else Decimal("Infinity")
+    return (row.gone_at is not None, price, row.first_seen_at)
 
 
 def cheapest_listing(db_session: Session, search: MarketplaceSearch) -> MarketplaceListing | None:
@@ -782,8 +800,50 @@ def check_source(
         len(intents),
     )
 
+    intents = _drop_offered_elsewhere(db_session, search, intents)
     if intents and alerts_enabled:
         _dispatch_alerts(db_session, search, intents, notifier, now)
+
+
+def _drop_offered_elsewhere(
+    db_session: Session, search: MarketplaceSearch, intents: list[_AlertIntent]
+) -> list[_AlertIntent]:
+    """No alert for a car another platform already offers for the same price or less."""
+    if not intents:
+        return intents
+    others = db_session.scalars(
+        select(MarketplaceListing).where(
+            MarketplaceListing.search_id == search.id,
+            MarketplaceListing.gone_at.is_(None),
+            MarketplaceListing.current_price.is_not(None),
+        )
+    ).all()
+    kept: list[_AlertIntent] = []
+    for intent in intents:
+        price = intent.listing.price
+        cheaper = next(
+            (
+                other
+                for other in others
+                if other.id != intent.row.id
+                and price is not None
+                and other.current_price <= price
+                and same_car(intent.row, other)
+            ),
+            None,
+        )
+        if cheaper is None:
+            kept.append(intent)
+            continue
+        logger.info(
+            "marketplace_search.same_car search_id=%s item_id=%s kind=%s elsewhere=%s:%s",
+            search.id,
+            intent.listing.item_id,
+            intent.kind,
+            cheaper.marketplace,
+            cheaper.item_id,
+        )
+    return kept
 
 
 def _ordered(adapters: Adapters) -> list[tuple[str, PlatformAdapter]]:

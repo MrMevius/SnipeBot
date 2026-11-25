@@ -26,6 +26,7 @@ from snipebot.domain.marketplace_searches import (
     cheapest_listing,
     create_search,
     delete_search,
+    earliest_listing,
     get_exclude_keywords,
     get_post_filters,
     get_search,
@@ -34,7 +35,7 @@ from snipebot.domain.marketplace_searches import (
     is_listing_new,
     list_makes,
     list_models,
-    list_search_listings,
+    list_search_cars,
     list_searches,
     preview_search,
     search_listing_counts,
@@ -199,6 +200,18 @@ class ListingPricePointResponse(BaseModel):
     observed_at: datetime
 
 
+class AlsoListedResponse(BaseModel):
+    """The same car on another platform."""
+
+    id: int
+    marketplace: str
+    item_id: str
+    url: str
+    current_price: float | None
+    city: str | None
+    gone_at: datetime | None
+
+
 class ListingResponse(BaseModel):
     id: int
     marketplace: str
@@ -220,6 +233,7 @@ class ListingResponse(BaseModel):
     gone_at: datetime | None
     price_history: list[ListingPricePointResponse]
     archive_id: int | None = None
+    also_listed: list[AlsoListedResponse] = []
 
 
 class ListingListResponse(BaseModel):
@@ -534,13 +548,39 @@ def get_listings(
 ) -> ListingListResponse:
     search = _get_owned_search(db_session, identity, search_id)
     now = datetime.now(UTC)
-    rows = list_search_listings(db_session, search)
+    cars = list_search_cars(db_session, search)
     archive_ids = archive_ids_for(
-        db_session, owner_id=identity.owner_id, item_ids=[row.item_id for row in rows]
+        db_session, owner_id=identity.owner_id, item_ids=[row.item_id for car in cars for row in car]
     )
     home = home_location()
     return ListingListResponse(
         search_id=search.id,
         distance_from=home.name if home is not None else None,
-        items=[_listing_response(row, now, archive_ids.get(row.item_id)) for row in rows],
+        items=[_car_response(car, now, archive_ids) for car in cars],
     )
+
+
+def _car_response(
+    car: list[MarketplaceListing], now: datetime, archive_ids: dict[str, int]
+) -> ListingResponse:
+    """The main listing of a car, with the car's other platforms."""
+    main, others = car[0], car[1:]
+    first = earliest_listing(car)
+    response = _listing_response(main, now, archive_ids.get(main.item_id))
+    if archive_ids.get(main.item_id) is None:
+        response.archive_id = next((archive_ids[row.item_id] for row in others if row.item_id in archive_ids), None)
+    response.first_seen_at = first.first_seen_at
+    response.is_new = is_listing_new(first, now)
+    response.also_listed = [
+        AlsoListedResponse(
+            id=row.id,
+            marketplace=row.marketplace,
+            item_id=row.item_id,
+            url=row.url,
+            current_price=float(row.current_price) if row.current_price is not None else None,
+            city=row.city,
+            gone_at=row.gone_at,
+        )
+        for row in others
+    ]
+    return response

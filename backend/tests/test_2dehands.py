@@ -113,6 +113,10 @@ def test_listing_on_marktplaats_and_2dehands_is_recorded_once() -> None:
 
     notifier = CollectingNotifier()
 
+    def car(number: int) -> dict:
+        # Different cars: same-car matching (``same_car``) would join equal ones.
+        return listing(number, mileage=number * 100)
+
     def run(mp, td):
         marktplaats.payloads.append(search_payload(mp))
         tweedehands.payloads.append(search_payload(td))
@@ -123,10 +127,10 @@ def test_listing_on_marktplaats_and_2dehands_is_recorded_once() -> None:
             session.commit()
             run_due_marketplace_searches(session, get_settings(), adapters=adapters, notifier=notifier)
 
-    run([listing(100)], [listing(200)])
+    run([car(100)], [car(200)])
     # The seller also shows m300 in Belgium; it is recorded and alerted once.
-    run([listing(300), listing(100)], [listing(300), listing(200)])
-    run([listing(300), listing(100)], [listing(300), listing(200)])
+    run([car(300), car(100)], [car(300), car(200)])
+    run([car(300), car(100)], [car(300), car(200)])
 
     with get_session_factory()() as session:
         rows = {row.item_id: row.marketplace for row in session.scalars(select(MarketplaceListing))}

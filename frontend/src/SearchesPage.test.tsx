@@ -310,6 +310,17 @@ describe("Marktplaats searches", () => {
                 { price: 22500, observed_at: "2026-11-23T10:00:00Z" },
                 { price: 21000, observed_at: "2026-11-23T11:00:00Z" },
               ],
+              also_listed: [
+                {
+                  id: 2,
+                  marketplace: "marktplaats",
+                  item_id: "m301",
+                  url: "https://www.marktplaats.nl/v/m301",
+                  current_price: 21500,
+                  city: "Almelo",
+                  gone_at: null,
+                },
+              ],
             },
           ],
         });
@@ -334,6 +345,12 @@ describe("Marktplaats searches", () => {
     expect(screen.getByTestId("listing-row-m300").querySelector(".flag-nl")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Location · km from Daarle/ })).toBeTruthy();
     expect(text).toContain("AutoTrack");
+    const platforms = screen.getByTestId("listing-platforms-m300");
+    expect([...platforms.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
+      "https://www.marktplaats.nl/v/m300",
+      "https://www.marktplaats.nl/v/m301",
+    ]);
+    expect(platforms.textContent?.replace(/\s/g, " ")).toContain("Marktplaats € 21.500");
     expect(text).toContain("battery capacity unknown");
     expect(screen.getByTestId("source-autotrack").textContent).toContain("SnipeBot checks battery capacity itself");
     await waitFor(() => expect((screen.getByLabelText("Model") as HTMLSelectElement).value).toBe("Golf"));
