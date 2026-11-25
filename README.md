@@ -13,7 +13,7 @@ SnipeBot is a self-hosted price-tracking application with a Docker-first runtime
 
 Besides product pages, SnipeBot can watch car searches on several platforms at once (Marktplaats.nl, 2dehands.be, AutoScout24.nl, ViaBOVAG.nl, Kleinanzeigen.de and AutoTrack.nl):
 
-1. Open **Searches**, choose a make and model (the lists come from the platforms; a platform that lacks the model is greyed out), tick the platforms and set the filters you need: year, price, mileage, minimum range and battery capacity.
+1. Open **Car searches**, choose a make and model (the lists come from the platforms; a platform that lacks the model is greyed out), tick the platforms and set the filters you need: year, price, mileage, minimum range and battery capacity.
 2. Optionally add exclude words and a seller filter, click **Preview** and compare the count per platform with the websites, then **Save search**.
 3. The first check of each platform records the current listings silently. Afterwards the worker checks every ~10 minutes per platform and sends a Telegram message (with photo) for each new matching listing and for price drops. When a search covers several platforms, the message names the platform.
 4. Set an **alert price ceiling** per search: Telegram only alerts for new listings and price drops at or below it (listings without a price never alert). Without a ceiling the search records and archives listings but sends no alerts.
