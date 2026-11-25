@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -94,6 +95,10 @@ MAX_KEYWORDS = 50
 _UNSET = object()
 MAX_ALERTS_PER_CHECK = 10
 NEW_LISTING_WINDOW = timedelta(hours=48)
+# A network error (DNS hiccup, dropped connection) is retried once after this
+# delay; when that fails too, the source stays "ok" until the next check also
+# fails, so a short hiccup does not show as an error.
+FETCH_RETRY_DELAY_SECONDS = 5.0
 DUE_BATCH_SIZE = 10
 UNKNOWN_POLICIES = ("include", "quiet", "exclude")
 PREVIEW_SAMPLE_SIZE = 5
@@ -627,8 +632,21 @@ def check_source(
     source.last_checked_at = now
     source.check_count += 1
 
+    query = json.loads(source.query_json)
     try:
-        page = adapter.search(json.loads(source.query_json))
+        try:
+            page = adapter.search(query)
+        except MarketplaceError as exc:
+            if exc.kind != "fetch_error":
+                raise
+            logger.info(
+                "marketplace_search.retry search_id=%s platform=%s reason=%s",
+                search.id,
+                source.marketplace,
+                exc,
+            )
+            time.sleep(FETCH_RETRY_DELAY_SECONDS)
+            page = adapter.search(query)
     except MarketplaceError as exc:
         _record_failure(source, exc.kind, str(exc), now, settings)
         return
@@ -1098,8 +1116,9 @@ def _record_failure(
         ** max(source.consecutive_failure_count - 1, 0)
     )
     backoff = min(backoff, max(1, settings.retry_max_interval_seconds))
-    source.last_status = kind
-    source.last_error_message = message[:512]
+    if not (kind == "fetch_error" and source.consecutive_failure_count == 1 and source.last_status == "ok"):
+        source.last_status = kind
+        source.last_error_message = message[:512]
     source.next_check_at = now + timedelta(seconds=backoff)
     metrics.inc(f"marketplace.search_failed.{kind}")
     logger.warning(

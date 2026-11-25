@@ -410,3 +410,45 @@ def test_changed_filters_drop_listings_that_no_longer_match() -> None:
     _run(adapters, notifier)
     assert sorted(_rows()) == ["at-1"]
     assert notifier.messages == []
+
+
+def test_a_network_hiccup_is_retried_and_one_failed_check_stays_ok(monkeypatch) -> None:
+    from snipebot.adapters.marketplaces.base import MarketplaceError
+    from snipebot.domain import marketplace_searches
+
+    monkeypatch.setattr(marketplace_searches, "FETCH_RETRY_DELAY_SECONDS", 0)
+    _reset()
+    adapters = _adapters()
+    _create(adapters, platforms=("marktplaats",))
+    adapters["marktplaats"].pages.append(SearchPage(1, [car("marktplaats", "m1")], complete=True))
+    _run(adapters, CollectingNotifier())
+
+    def source() -> MarketplaceSearchSource:
+        with get_session_factory()() as session:
+            return session.scalars(select(MarketplaceSearchSource)).one()
+
+    def hiccup() -> MarketplaceError:
+        return MarketplaceError("fetch_error", "Marktplaats request failed: [Errno -3] Temporary failure")
+
+    # Fails once, the retry works.
+    adapters["marktplaats"].pages.extend([hiccup(), SearchPage(1, [car("marktplaats", "m1")], complete=True)])
+    _run(adapters, CollectingNotifier())
+    assert (source().last_status, source().consecutive_failure_count) == ("ok", 0)
+
+    # Retry fails too: still shown as ok, the next check comes sooner.
+    adapters["marktplaats"].pages.extend([hiccup(), hiccup()])
+    _run(adapters, CollectingNotifier())
+    assert (source().last_status, source().consecutive_failure_count) == ("ok", 1)
+
+    # The next check fails as well: now it is an error.
+    adapters["marktplaats"].pages.extend([hiccup(), hiccup()])
+    _run(adapters, CollectingNotifier())
+    assert (source().last_status, source().consecutive_failure_count) == ("fetch_error", 2)
+    assert "Temporary failure" in source().last_error_message
+
+    # Other errors (blocked) show at once.
+    adapters["marktplaats"].pages.append(SearchPage(1, [car("marktplaats", "m1")], complete=True))
+    _run(adapters, CollectingNotifier())
+    adapters["marktplaats"].pages.append(MarketplaceError("blocked", "HTTP 403"))
+    _run(adapters, CollectingNotifier())
+    assert source().last_status == "blocked"
