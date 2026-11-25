@@ -7,7 +7,9 @@ unknown is kept and marked, so nothing is hidden on missing data alone.
 
 from __future__ import annotations
 
-from snipebot.adapters.marketplaces.base import FILTER_KEYS, Listing, SearchFilters
+import re
+
+from snipebot.adapters.marketplaces.base import FILTER_KEYS, Listing, SearchFilters, normalize_label
 from snipebot.domain import car_variants
 
 FILTER_LABELS = {
@@ -116,3 +118,43 @@ def _format(key: str, value: int | None) -> str | None:
     if key == "battery":
         return f"{number} kWh"
     return str(value)
+
+
+# Model labels that name no model ("Overige", "andere"), and labels too short to
+# search a title for without hitting other words ("1", "e").
+_GENERIC_MODELS = {"overig", "overige", "andere", "anders", "other", "others", "sonstige", "weitere", "autres"}
+_MIN_MODEL_LENGTH = 2
+
+
+def names_other_model(title: str, make: str, model: str, model_labels: list[str]) -> bool:
+    """Whether the title names another model of the make and not the searched one.
+
+    Sellers now and then list a car under the wrong model ("TESLA Y RWD" under
+    Model 3). Only the title counts: descriptions often mention other models
+    ("same charger as the Model Y"), and a title without any model name stays in.
+    """
+    if _title_names(title, make, model):
+        return False
+    wanted = normalize_label(model)
+    for label in model_labels:
+        name = normalize_label(label)
+        if (
+            name in _GENERIC_MODELS
+            or len(name) < _MIN_MODEL_LENGTH
+            or not any(char.isalpha() for char in name)
+            or wanted in name
+            or name in wanted
+        ):
+            continue
+        if _title_names(title, make, label):
+            return True
+    return False
+
+
+def _title_names(title: str, make: str, model: str) -> bool:
+    words = model.split()
+    patterns = [r"[\s\-]*".join(re.escape(word) for word in words)]
+    if len(words) == 2 and words[0].lower() == "model":
+        # "Tesla Y" for the Model Y.
+        patterns.append(rf"{re.escape(make)}\s+{re.escape(words[1])}")
+    return any(re.search(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])", title, re.IGNORECASE) for pattern in patterns)
