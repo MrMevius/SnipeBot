@@ -709,7 +709,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
       <section className="panel">
         <div className="searches-head">
           <div>
-            <h1>Searches</h1>
+            <h1>Car searches</h1>
             <p className="muted">
               Choose a car and filters once; SnipeBot searches every selected platform and alerts on new
               listings and price drops.
@@ -1097,7 +1097,7 @@ function SearchDetail({
             onNavigate("/searches");
           }}
         >
-          ← All searches
+          ← All car searches
         </a>
         {search && (
           <>

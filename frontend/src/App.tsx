@@ -1174,7 +1174,7 @@ function ProductDetailPage({
     },
     {
       key: "searches",
-      label: "Searches",
+      label: "Car searches",
       href: "/searches",
       active: false,
       onClick: (event) => {
@@ -1494,7 +1494,7 @@ export function App() {
     },
     {
       key: "searches",
-      label: "Searches",
+      label: "Car searches",
       href: "/searches",
       active: route.kind === "searches",
       onClick: (event) => {
@@ -2314,7 +2314,7 @@ export function App() {
 
           <h3>Occasion websites</h3>
           <p className="muted">
-            Voor auto-zoekopdrachten: open <strong>Searches</strong>, kies merk en model, vink de
+            Voor auto-zoekopdrachten: open <strong>Car searches</strong>, kies merk en model, vink de
             websites aan en stel filters en prijsplafond in. SnipeBot controleert elke website ongeveer
             elke 10 minuten, meldt nieuwe auto's en prijsdalingen via Telegram en bewaart elke advertentie
             met foto's in het <strong>Archive</strong>. Dezelfde auto op meerdere websites wordt herkend aan
