@@ -198,3 +198,25 @@ def test_resolve_variants_uses_search_data_archive_cache_and_pages(db_session) -
     resolve_variants(db_session, "kleinanzeigen", renamed, fetch_detail=fetch, max_fetches=1, now=now)
     assert len(pages) == 3
     assert [listing.attributes.get("variant") for listing in renamed] == ["sr", None, None]
+
+
+TESLA_MODELS = ["Model 3", "Model S", "Model X", "Model Y", "Cybertruck", "Roadster", "Overige"]
+
+
+@pytest.mark.parametrize(
+    ("title", "other"),
+    [
+        ("TESLA Y RWD", True),
+        ("Tesla Model Y Long Range AWD", True),
+        ("Tesla ModelY 2024", True),
+        ("Tesla Model 3 Long Range, ruil tegen Model Y mogelijk", False),
+        ("Tesla Model3 Highland", False),
+        ("Tesla 3 Long Range", False),
+        ("Tesla Highland RWD", False),
+        ("Tesla Model 3 SR, Yoke-stuur", False),
+    ],
+)
+def test_title_naming_another_model(title, other) -> None:
+    from snipebot.domain.search_filters import names_other_model
+
+    assert names_other_model(title, "Tesla", "Model 3", TESLA_MODELS) is other

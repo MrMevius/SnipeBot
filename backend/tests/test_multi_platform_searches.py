@@ -452,3 +452,29 @@ def test_a_network_hiccup_is_retried_and_one_failed_check_stays_ok(monkeypatch) 
     adapters["marktplaats"].pages.append(MarketplaceError("blocked", "HTTP 403"))
     _run(adapters, CollectingNotifier())
     assert source().last_status == "blocked"
+
+
+def test_listing_titled_as_another_model_leaves_the_search() -> None:
+    _reset()
+    adapters = _adapters()
+    adapters["marktplaats"] = FakeAdapter("marktplaats", "Marktplaats", models={"Tesla": ["Model 3", "Model Y"]})
+    notifier = CollectingNotifier()
+    _create(adapters, platforms=("marktplaats",))
+    adapters["marktplaats"].pages.append(SearchPage(1, [car("marktplaats", "m1")], complete=True))
+    _run(adapters, notifier)
+
+    # Listed under Model 3, but the title says Model Y: no row, no alert.
+    adapters["marktplaats"].pages.append(
+        SearchPage(2, [car("marktplaats", "m2", title="TESLA Y RWD"), car("marktplaats", "m1")], complete=True)
+    )
+    _run(adapters, notifier)
+    assert sorted(_rows()) == ["m1"]
+    assert notifier.messages == []
+
+    # A recorded listing whose title changes to another model is removed silently.
+    adapters["marktplaats"].pages.append(
+        SearchPage(1, [car("marktplaats", "m1", title="Tesla Model Y Performance")], complete=True)
+    )
+    _run(adapters, notifier)
+    assert _rows() == {}
+    assert notifier.messages == []

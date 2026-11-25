@@ -70,6 +70,7 @@ from snipebot.domain.search_filters import (
     FILTER_LABELS,
     check_listing,
     describe_filters,
+    names_other_model,
     validate_filters,
 )
 from snipebot.domain.variant_resolution import (
@@ -669,10 +670,13 @@ def check_source(
         )
 
     page_ids = {listing.item_id for listing in page.listings}
+    model_labels = _model_labels(adapter, filters)
     matching: list[Listing] = []
     unknown_by_id: dict[str, list[str]] = {}
     for listing in page.listings:
         if _is_excluded(listing, keywords):
+            continue
+        if filters is not None and names_other_model(listing.title, filters.make, filters.model, model_labels):
             continue
         if post_filters:
             matches, unknown = check_listing(filters, listing, post_filters)
@@ -747,23 +751,22 @@ def check_source(
                 )
             )
 
-    if baseline:
-        # A new baseline follows a change of the filters: listings that are
-        # still on the platform but no longer match leave the search.
-        matched = {listing.item_id for listing in matching}
-        _delete_listing_rows(
-            db_session,
-            [
-                row
-                for row in db_session.scalars(
-                    select(MarketplaceListing).where(
-                        MarketplaceListing.search_id == search.id,
-                        MarketplaceListing.marketplace == source.marketplace,
-                        MarketplaceListing.item_id.in_(page_ids - matched),
-                    )
-                ).all()
-            ],
-        )
+    # Listings that are still on the platform but no longer match (the
+    # filters changed, or the title now names another model) leave the search.
+    matched = {listing.item_id for listing in matching}
+    _delete_listing_rows(
+        db_session,
+        [
+            row
+            for row in db_session.scalars(
+                select(MarketplaceListing).where(
+                    MarketplaceListing.search_id == search.id,
+                    MarketplaceListing.marketplace == source.marketplace,
+                    MarketplaceListing.item_id.in_(page_ids - matched),
+                )
+            ).all()
+        ],
+    )
 
     archive = settings.marketplace_archive_enabled and source.marketplace in ARCHIVE_MARKETPLACES
     if policy == "exclude":
@@ -821,6 +824,18 @@ def check_source(
     intents = _drop_offered_elsewhere(db_session, search, intents)
     if intents and alerts_enabled:
         _dispatch_alerts(db_session, search, intents, notifier, now)
+
+
+def _model_labels(adapter: PlatformAdapter, filters: SearchFilters | None) -> list[str]:
+    """The platform's models of the searched make (cached by the adapter); none if unavailable."""
+    if filters is None:
+        return []
+    try:
+        make = find_option(adapter.makes(), filters.make)
+        return [option.label for option in adapter.models(make)] if make is not None else []
+    except MarketplaceError as exc:
+        logger.info("marketplace_search.models_unavailable platform=%s reason=%s", adapter.label, exc)
+        return []
 
 
 def _drop_offered_elsewhere(
