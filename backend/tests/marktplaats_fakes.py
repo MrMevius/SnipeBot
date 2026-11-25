@@ -79,6 +79,7 @@ def listing(
     distance_meters: int = 12000,
     coordinates: tuple[float, float] | None = None,
     country_name: str = "Nederland",
+    mileage: int = 64500,
 ) -> dict[str, Any]:
     item_id = f"m{number}"
     extended = [{"key": "advertiser", "value": advertiser, "values": [advertiser]}] if advertiser else []
@@ -108,7 +109,7 @@ def listing(
         "priorityProduct": "DAGTOPPER",
         "attributes": [
             {"key": "constructionYear", "value": "2021", "values": ["2021"]},
-            {"key": "mileage", "value": "64500", "values": ["64500"]},
+            {"key": "mileage", "value": str(mileage), "values": [str(mileage)]},
             {"key": "fuel", "value": "Benzine", "values": ["Benzine"]},
             {"key": "transmission", "value": "Automaat", "values": ["Automaat"]},
         ],

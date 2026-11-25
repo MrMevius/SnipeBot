@@ -1288,9 +1288,31 @@ function SearchDetail({
                     {hasDetails && <td>{carDetails(listing.attributes) || "–"}</td>}
                     {multiPlatform && (
                       <td>
-                        <span className={`platform-badge platform-${listing.marketplace}`}>
-                          {search ? platformLabel(search, listing.marketplace) : listing.marketplace}
-                        </span>
+                        <div className="listing-platforms" data-testid={`listing-platforms-${listing.item_id}`}>
+                          <a
+                            href={listing.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className={`platform-badge platform-${listing.marketplace}`}
+                          >
+                            {search ? platformLabel(search, listing.marketplace) : listing.marketplace}
+                          </a>
+                          {(listing.also_listed ?? []).map((other) => (
+                            <a
+                              key={other.id}
+                              href={other.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`platform-badge platform-${other.marketplace}${other.gone_at ? " platform-badge-gone" : ""}`}
+                              title={`Same car${other.city ? ` in ${other.city}` : ""}${other.gone_at ? " (gone)" : ""}`}
+                            >
+                              {search ? platformLabel(search, other.marketplace) : other.marketplace}
+                              {other.current_price !== null && other.current_price !== listing.current_price && (
+                                <span className="platform-badge-price"> {formatEuro(other.current_price)}</span>
+                              )}
+                            </a>
+                          ))}
+                        </div>
                       </td>
                     )}
                     <td>
