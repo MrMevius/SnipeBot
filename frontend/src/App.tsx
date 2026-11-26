@@ -872,18 +872,6 @@ const SUPPORTED_CAR_SITES: SupportedCarSite[] = [
     supplyNote: "meer dan 165.000 auto's (ANWB)",
   },
   {
-    siteKey: "mobile_de",
-    label: "mobile.de",
-    domain: "mobile.de",
-    status: "blocked",
-    countries: "DE",
-    sellers: "Particulier + dealer",
-    filters: "Nog te onderzoeken",
-    note: "Blokkeert SnipeBot (HTTP 403) en verbiedt zoekpagina's in robots.txt; niet te koppelen.",
-    supply: 1400000,
-    supplyNote: "1,2–1,6 mln voertuigen (mobile.de / Adevinta)",
-  },
-  {
     siteKey: "leboncoin",
     label: "leboncoin",
     domain: "leboncoin.fr",
