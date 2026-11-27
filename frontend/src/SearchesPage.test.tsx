@@ -234,9 +234,9 @@ describe("Marktplaats searches", () => {
     expect(await screen.findByText("Saved search “Golf GTI”.")).toBeTruthy();
     const row = (await screen.findByTestId("search-row-7")).textContent ?? "";
     expect(row).toContain("1 new");
-    expect(row).toContain("Marktplaats + AutoTrack");
-    expect(row).toContain("Not stated: keep, no alerts");
-    expect(row.replace(/\s/g, " ")).toContain("Alerts ≤ € 45.000");
+    expect(row).toContain("MarktplaatsAutoTrack");
+    expect(row).toContain("Not statedKeep, no alerts");
+    expect(row.replace(/\s/g, " ")).toContain("Alerts≤ € 45.000");
     const cheapest = screen.getByTestId("search-cheapest-7");
     expect(cheapest.textContent?.replace(/\s/g, " ")).toContain("€ 21.000 · Marktplaats");
     expect(cheapest.querySelector("a")?.getAttribute("href")).toBe("/archive/3");
