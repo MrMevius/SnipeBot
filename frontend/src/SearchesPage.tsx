@@ -1,4 +1,4 @@
-import { FormEvent, MouseEvent, ReactNode, useCallback, useEffect, useState } from "react";
+import { FormEvent, MouseEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import {
   MarketplaceListing,
@@ -582,6 +582,11 @@ function SearchPreviewCard({ preview }: { preview: MarketplaceSearchPreview }) {
   );
 }
 
+function splitDescription(line: string): [string, string] {
+  const index = line.indexOf(": ");
+  return index === -1 ? ["Filter", line] : [line.slice(0, index), line.slice(index + 2)];
+}
+
 function platformNames(search: MarketplaceSearch): string {
   return search.platforms.map((platform) => platform.label).join(" + ");
 }
@@ -601,6 +606,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  const newSearchRef = useRef<HTMLElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -703,24 +709,45 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
   }
 
   const newCount = searches.reduce((total, search) => total + search.new_listing_count, 0);
+  const activeCount = searches.filter((search) => search.active).length;
+
+  function openNewSearch() {
+    setNewOpen(true);
+    newSearchRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }
 
   return (
     <>
-      <section className="panel">
+      <section className="panel searches-panel">
         <div className="searches-head">
-          <div>
+          <div className="searches-intro">
             <h1>Car searches</h1>
             <p className="muted">
               Choose a car and filters once; SnipeBot searches every selected platform and alerts on new
               listings and price drops.
             </p>
           </div>
-          {searches.length > 0 && (
-            <div className="searches-summary">
-              <span className="chip">{searches.length} searches</span>
-              {newCount > 0 && <span className="chip chip-new">{newCount} new listings</span>}
-            </div>
-          )}
+          <div className="searches-head-side">
+            {searches.length > 0 && (
+              <dl className="searches-kpis">
+                <div className="searches-kpi">
+                  <dt>Searches</dt>
+                  <dd>{searches.length}</dd>
+                </div>
+                <div className="searches-kpi">
+                  <dt>Active</dt>
+                  <dd>{activeCount}</dd>
+                </div>
+                <div className={`searches-kpi${newCount > 0 ? " searches-kpi-new" : ""}`}>
+                  <dt>New listings</dt>
+                  <dd>{newCount}</dd>
+                </div>
+              </dl>
+            )}
+            <button type="button" className="searches-new-button" onClick={openNewSearch}>
+              + New search
+            </button>
+          </div>
         </div>
         {error && !newOpen && <p className="error">{error}</p>}
         {feedback && <p className="success">{feedback}</p>}
@@ -736,46 +763,64 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
                 event.preventDefault();
                 onNavigate(href);
               };
+              const tone = search.active ? statusTone(search.last_status) : "paused";
               return (
-                <article key={search.id} className="search-card" data-testid={`search-row-${search.id}`}>
+                <article
+                  key={search.id}
+                  className={`search-card${search.active ? "" : " search-card-paused"}`}
+                  data-testid={`search-row-${search.id}`}
+                >
                   <header className="search-card-head">
                     <div className="search-card-name">
                       <a href={href} className="search-card-title" onClick={openSearch}>
                         {search.name}
                       </a>
-                      <div className="muted search-card-platforms">{platformNames(search)}</div>
+                      <div className="search-card-platforms" aria-label={platformNames(search)}>
+                        {search.platforms.map((platform) => (
+                          <span key={platform.marketplace} className="search-platform-tag">
+                            {platform.label}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                     <span
-                      className={`status-badge status-${search.active ? statusTone(search.last_status) : "neutral"}`}
+                      className={`search-status search-status-${tone}`}
                       title={search.last_error_message ?? undefined}
                     >
+                      <span className="search-status-dot" aria-hidden="true" />
                       {statusLabel(search)}
                     </span>
                   </header>
-                  <div className="search-chips">
+                  <dl className="search-specs">
                     {search.description
                       .filter((line) => !line.startsWith("Auto: "))
-                      .map((line) => (
-                        <span key={line} className="chip">
-                          {line}
-                        </span>
-                      ))}
-                    <span className="chip chip-accent">{ceilingLabel(search.alert_max_price)}</span>
-                    {search.unknown_policy !== "include" && (
-                      <span className="chip">
-                        Not stated: {UNKNOWN_POLICY_LABELS[search.unknown_policy].toLowerCase()}
-                      </span>
-                    )}
-                  </div>
+                      .map((line) => {
+                        const [label, value] = splitDescription(line);
+                        return (
+                          <div key={line} className="search-spec">
+                            <dt>{label}</dt>
+                            <dd>{value}</dd>
+                          </div>
+                        );
+                      })}
+                    <div className="search-spec search-spec-accent">
+                      <dt>Alerts</dt>
+                      <dd>{search.alert_max_price === null ? "Off" : `≤ ${formatEuro(search.alert_max_price)}`}</dd>
+                    </div>
+                    <div className="search-spec">
+                      <dt>Not stated</dt>
+                      <dd>{UNKNOWN_POLICY_LABELS[search.unknown_policy]}</dd>
+                    </div>
+                  </dl>
                   <div className="search-card-stats">
                     <div className="search-stat">
                       <span className="search-stat-label">Listings</span>
-                      <span className="search-stat-value">
-                        {search.listing_count}
-                        {search.new_listing_count > 0 && (
-                          <span className="badge badge-new">{search.new_listing_count} new</span>
-                        )}
-                      </span>
+                      <span className="search-stat-value">{search.listing_count}</span>
+                      {search.new_listing_count > 0 ? (
+                        <span className="search-stat-sub search-stat-new">{search.new_listing_count} new</span>
+                      ) : (
+                        <span className="search-stat-sub">none new</span>
+                      )}
                     </div>
                     <div className="search-stat search-stat-wide" data-testid={`search-cheapest-${search.id}`}>
                       <span className="search-stat-label">Cheapest</span>
@@ -783,7 +828,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
                         <>
                           <span className="search-stat-value">
                             {formatEuro(search.cheapest.price)}
-                            <span className="muted search-stat-platform">
+                            <span className="search-stat-platform">
                               {" "}
                               · {platformLabel(search, search.cheapest.marketplace)}
                             </span>
@@ -791,7 +836,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
                           {search.cheapest.archive_id ? (
                             <a
                               href={`/archive/${search.cheapest.archive_id}`}
-                              className="search-cheapest-title"
+                              className="search-stat-sub search-cheapest-title"
                               title={search.cheapest.title}
                               onClick={(event) => {
                                 event.preventDefault();
@@ -805,7 +850,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
                               href={search.cheapest.url}
                               target="_blank"
                               rel="noreferrer"
-                              className="search-cheapest-title"
+                              className="search-stat-sub search-cheapest-title"
                               title={search.cheapest.title}
                             >
                               {search.cheapest.title}
@@ -816,7 +861,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
                         <span className="search-stat-value muted">–</span>
                       )}
                     </div>
-                    <div className="search-stat">
+                    <div className="search-stat search-stat-end">
                       <span className="search-stat-label">Last check</span>
                       <span className="search-stat-value search-stat-small">
                         {search.last_checked_at ? formatShortDate(search.last_checked_at) : "never"}
@@ -874,7 +919,7 @@ function SearchOverview({ onNavigate }: { onNavigate: (href: string) => void }) 
         )}
       </section>
 
-      <section className="panel compact-form">
+      <section className="panel compact-form" ref={newSearchRef}>
         <details
           className="search-new"
           open={newOpen}
