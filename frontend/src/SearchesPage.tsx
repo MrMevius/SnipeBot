@@ -1133,10 +1133,10 @@ function SearchDetail({
 
   return (
     <>
-      <section className="panel compact-form">
+      <section className="panel compact-form searches-panel">
         <a
           href="/searches"
-          className="product-link"
+          className="search-back-link"
           onClick={(event) => {
             event.preventDefault();
             onNavigate("/searches");
@@ -1146,27 +1146,66 @@ function SearchDetail({
         </a>
         {search && (
           <>
-            <div className="search-head">
-              <h1>{search.name}</h1>
-              <div className="search-chips">
-                {search.description.map((line) => (
-                  <span key={line} className="chip">
-                    {line}
+            <div className="searches-head search-detail-head">
+              <div className="searches-intro">
+                <div className="search-detail-title">
+                  <h1>{search.name}</h1>
+                  <span
+                    className={`search-status search-status-${search.active ? statusTone(search.last_status) : "paused"}`}
+                    title={search.last_error_message ?? undefined}
+                  >
+                    <span className="search-status-dot" aria-hidden="true" />
+                    {statusLabel(search)}
                   </span>
-                ))}
-                <span className="chip chip-accent">{ceilingLabel(search.alert_max_price)}</span>
-                {search.unknown_policy !== "include" && (
-                  <span className="chip">Not stated: {UNKNOWN_POLICY_LABELS[search.unknown_policy].toLowerCase()}</span>
-                )}
-                {!search.active && <span className="chip">Paused</span>}
+                </div>
+                <p className="muted">
+                  Last check {formatDate(search.last_checked_at)}
+                </p>
               </div>
+              <dl className="searches-kpis">
+                <div className="searches-kpi">
+                  <dt>Listings</dt>
+                  <dd>{search.listing_count}</dd>
+                </div>
+                <div className={`searches-kpi${search.new_listing_count > 0 ? " searches-kpi-new" : ""}`}>
+                  <dt>New</dt>
+                  <dd>{search.new_listing_count}</dd>
+                </div>
+                <div className="searches-kpi">
+                  <dt>Cheapest</dt>
+                  <dd>{search.cheapest ? formatEuro(search.cheapest.price) : "–"}</dd>
+                </div>
+              </dl>
             </div>
+            <dl className="search-specs search-detail-specs">
+              {search.description.map((line) => {
+                const [label, value] = splitDescription(line);
+                return (
+                  <div key={line} className="search-spec">
+                    <dt>{label}</dt>
+                    <dd>{value}</dd>
+                  </div>
+                );
+              })}
+              <div className="search-spec search-spec-accent">
+                <dt>Alerts</dt>
+                <dd>{search.alert_max_price === null ? "Off" : `≤ ${formatEuro(search.alert_max_price)}`}</dd>
+              </div>
+              <div className="search-spec">
+                <dt>Not stated</dt>
+                <dd>{UNKNOWN_POLICY_LABELS[search.unknown_policy]}</dd>
+              </div>
+            </dl>
+            <h2 className="search-section-label">Platforms</h2>
             <div className="search-source-grid">
               {search.platforms.map((platform) => (
                 <div key={platform.marketplace} className="search-source-card" data-testid={`source-${platform.marketplace}`}>
                   <div className="search-source-head">
                     <strong>{platform.label}</strong>
-                    <span className={`status-badge status-${sourceTone(platform)}`}>{sourceStatus(platform)}</span>
+                    <span className={`search-status search-status-${sourceTone(platform)}`}>
+                      <span className="search-status-dot" aria-hidden="true" />
+                      {sourceStatus(platform)}
+                    </span>
                   </div>
                   <div className="search-source-count">
                     {platform.last_total_count ?? "–"} <span className="muted">results</span>
@@ -1231,11 +1270,13 @@ function SearchDetail({
         {feedback && <p className="success">{feedback}</p>}
       </section>
 
-      <section className="panel">
+      <section className="panel searches-panel">
         <div className="listings-toolbar">
-          <h2>Listings ({visible.length})</h2>
+          <h2>
+            Listings <span className="listings-count">{visible.length}</span>
+          </h2>
           {goneCount > 0 && (
-            <label className="toggle-row">
+            <label className="toggle-row listings-gone-toggle">
               <input
                 type="checkbox"
                 checked={showGone}
