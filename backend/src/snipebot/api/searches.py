@@ -21,7 +21,7 @@ from snipebot.api.deps import (
 )
 from snipebot.core.metrics import metrics
 from snipebot.domain.listing_highlights import car_highlights
-from snipebot.domain.marketplace_archive import archive_ids_for
+from snipebot.domain.marketplace_archive import archive_ids_for, item_descriptions
 from snipebot.domain.marketplace_searches import (
     MergedOption,
     cheapest_listing,
@@ -608,14 +608,14 @@ def get_listings(
     total = len(cars)
     if page_size is not None:
         cars = cars[(page - 1) * page_size : page * page_size]
-    archive_ids = archive_ids_for(
-        db_session, owner_id=identity.owner_id, item_ids=[row.item_id for car in cars for row in car]
-    )
+    item_ids = [row.item_id for car in cars for row in car]
+    archive_ids = archive_ids_for(db_session, owner_id=identity.owner_id, item_ids=item_ids)
+    descriptions = item_descriptions(db_session, owner_id=identity.owner_id, item_ids=item_ids)
     home = home_location()
     return ListingListResponse(
         search_id=search.id,
         distance_from=home.name if home is not None else None,
-        items=[_car_response(car, now, archive_ids) for car in cars],
+        items=[_car_response(car, now, archive_ids, descriptions) for car in cars],
         total=total,
         page=page if page_size is not None else 1,
         page_size=page_size,
@@ -623,7 +623,10 @@ def get_listings(
 
 
 def _car_response(
-    car: list[MarketplaceListing], now: datetime, archive_ids: dict[str, int]
+    car: list[MarketplaceListing],
+    now: datetime,
+    archive_ids: dict[str, int],
+    descriptions: dict[str, str] | None = None,
 ) -> ListingResponse:
     """The main listing of a car, with the car's other platforms."""
     main, others = car[0], car[1:]
@@ -633,7 +636,10 @@ def _car_response(
         response.archive_id = next((archive_ids[row.item_id] for row in others if row.item_id in archive_ids), None)
     response.first_seen_at = first.first_seen_at
     response.is_new = is_listing_new(first, now)
-    response.highlights = car_highlights((row.title, json.loads(row.attributes_json or "{}")) for row in car)
+    response.highlights = car_highlights(
+        (row.title, json.loads(row.attributes_json or "{}"), (descriptions or {}).get(row.item_id))
+        for row in car
+    )
     response.also_listed = [
         AlsoListedResponse(
             id=row.id,
