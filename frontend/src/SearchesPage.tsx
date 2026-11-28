@@ -118,7 +118,9 @@ const PLATFORM_COUNTRY: Record<string, string> = {
   autotrack: "NL",
 };
 
-function listingCountry(listing: MarketplaceListing): string | null {
+export function listingCountry(
+  listing: Pick<MarketplaceListing, "attributes" | "city" | "marketplace">,
+): string | null {
   const stated = listing.attributes.country;
   // Older rows of Scout24 sites carried the country in the city: "Gent (BE)".
   const fromCity = listing.city?.match(/\(([A-Z]{2})\)$/)?.[1];
@@ -137,7 +139,7 @@ const FLAG_NAMES: Record<string, string> = {
 };
 
 // CSS flags: Windows browsers show emoji flags as two letters.
-function CountryFlag({ code }: { code: string | null }) {
+export function CountryFlag({ code }: { code: string | null }) {
   if (!code) return null;
   const known = code in FLAG_NAMES;
   return (
@@ -153,7 +155,7 @@ function CountryFlag({ code }: { code: string | null }) {
 }
 
 // "24-11 13:56"; the year is added for other years.
-function formatShortDate(value: string): string {
+export function formatShortDate(value: string): string {
   const date = new Date(value.endsWith("Z") || value.includes("+") ? value : `${value}Z`);
   const sameYear = date.getFullYear() === new Date().getFullYear();
   const day = date.toLocaleDateString("nl-NL", {
@@ -195,12 +197,12 @@ function numericAttribute(listing: MarketplaceListing, key: string): number | nu
 
 type ListingSort = { column: ListingSortColumn; direction: "asc" | "desc" };
 
-const PAGE_SIZES = [25, 50, 100] as const;
+export const PAGE_SIZES = [25, 50, 100] as const;
 const PAGE_SIZE_KEY = "snipebot.listingsPageSize";
 
-// Cars per page on a search; null shows all at once.
-function storedPageSize(): number | null {
-  const stored = window.localStorage.getItem(PAGE_SIZE_KEY);
+// Cars per page, remembered per list; null shows all at once.
+export function storedPageSize(key: string): number | null {
+  const stored = window.localStorage.getItem(key);
   if (stored === "all") return null;
   const value = Number(stored);
   return PAGE_SIZES.includes(value as (typeof PAGE_SIZES)[number]) ? value : PAGE_SIZES[0];
@@ -1007,7 +1009,7 @@ function SearchDetail({
   const [unknownPolicy, setUnknownPolicy] = useState<UnknownPolicy>("include");
   const [distanceFrom, setDistanceFrom] = useState<string | null>(null);
   const [listingSort, setListingSort] = useState<ListingSort>({ column: "first_seen", direction: "desc" });
-  const [pageSize, setPageSize] = useState<number | null>(storedPageSize);
+  const [pageSize, setPageSize] = useState<number | null>(() => storedPageSize(PAGE_SIZE_KEY));
   const [page, setPage] = useState(1);
   const [busy, setBusy] = useState(false);
 

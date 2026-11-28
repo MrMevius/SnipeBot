@@ -1,7 +1,9 @@
 import { ReactNode, useCallback, useEffect, useState } from "react";
 
 import { TrendChart } from "./App";
+import { CountryFlag, PAGE_SIZES, formatShortDate, listingCountry, storedPageSize } from "./SearchesPage";
 import {
+  ArchiveCar,
   ArchiveItemDetail,
   ArchiveItemSummary,
   ArchiveListResponse,
@@ -17,7 +19,7 @@ import {
   platformLabel,
 } from "./api/client";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE_KEY = "snipebot.archivePageSize";
 
 type SortColumn = NonNullable<ArchiveQuery["sort"]>;
 
@@ -45,16 +47,6 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / 1024)} KB`;
 }
 
-function carSummary(attributes: Record<string, string>): string {
-  const parts: string[] = [];
-  if (attributes.constructionYear) parts.push(attributes.constructionYear);
-  const mileage = Number(attributes.mileage);
-  if (attributes.mileage && Number.isFinite(mileage)) {
-    parts.push(`${mileage.toLocaleString("nl-NL")} km`);
-  }
-  return parts.join(" · ");
-}
-
 function StatusPill({ item }: { item: ArchiveItemSummary }) {
   if (item.gone_at) return <span className="pill">gone</span>;
   if (item.status === "pending") return <span className="pill">queued</span>;
@@ -77,16 +69,21 @@ function navigateLink(href: string, onNavigate: (href: string) => void) {
   };
 }
 
+function numericAttribute(item: ArchiveItemSummary, key: string): number | null {
+  const value = Number(item.attributes[key]);
+  return item.attributes[key] && Number.isFinite(value) ? value : null;
+}
+
 function ArchiveList({ onNavigate }: { onNavigate: (href: string) => void }) {
   const [searches, setSearches] = useState<MarketplaceSearch[]>([]);
   const [queryText, setQueryText] = useState("");
   const [appliedText, setAppliedText] = useState("");
   const [searchId, setSearchId] = useState("");
-  const [status, setStatus] = useState<"" | "online" | "gone">("");
   const [platform, setPlatform] = useState("");
-  const [sort, setSort] = useState<SortColumn>("first_seen");
-  const [order, setOrder] = useState<"asc" | "desc">("desc");
-  const [offset, setOffset] = useState(0);
+  const [sort, setSort] = useState<SortColumn>("gone");
+  const [direction, setDirection] = useState<"asc" | "desc">("desc");
+  const [pageSize, setPageSize] = useState<number | null>(() => storedPageSize(PAGE_SIZE_KEY));
+  const [pageNumber, setPageNumber] = useState(1);
   const [page, setPage] = useState<ArchiveListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -101,12 +98,11 @@ function ArchiveList({ onNavigate }: { onNavigate: (href: string) => void }) {
     fetchArchive({
       q: appliedText || undefined,
       search_id: searchId ? Number(searchId) : undefined,
-      status: status || undefined,
       marketplace: platform || undefined,
       sort,
-      order,
-      limit: PAGE_SIZE,
-      offset,
+      direction,
+      page: pageSize ? pageNumber : undefined,
+      page_size: pageSize ?? undefined,
     })
       .then((payload) => {
         if (!cancelled) {
@@ -120,65 +116,88 @@ function ArchiveList({ onNavigate }: { onNavigate: (href: string) => void }) {
     return () => {
       cancelled = true;
     };
-  }, [appliedText, searchId, status, platform, sort, order, offset]);
+  }, [appliedText, searchId, platform, sort, direction, pageSize, pageNumber]);
 
-  function sortBy(column: SortColumn) {
-    setOffset(0);
-    if (column === sort) {
-      setOrder(order === "asc" ? "desc" : "asc");
-    } else {
-      setSort(column);
-      setOrder("asc");
-    }
-  }
-
-  function sortHeader(column: SortColumn, label: string) {
+  function sortHeader(column: SortColumn, label: string, className?: string) {
     const active = sort === column;
     return (
-      <th aria-sort={active ? (order === "asc" ? "ascending" : "descending") : undefined}>
-        <button type="button" className="sort-button" onClick={() => sortBy(column)}>
+      <th className={className} aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : undefined}>
+        <button
+          type="button"
+          className="sort-button"
+          onClick={() => {
+            setPageNumber(1);
+            setDirection(active && direction === "asc" ? "desc" : "asc");
+            setSort(column);
+          }}
+        >
           {label}{" "}
-          <span className="sort-indicator">{active ? (order === "asc" ? "↑" : "↓") : "↕"}</span>
+          <span className="sort-indicator">{active ? (direction === "asc" ? "↑" : "↓") : "↕"}</span>
         </button>
       </th>
     );
   }
 
-  const items = page?.items ?? [];
+  function changePageSize(value: string) {
+    window.localStorage.setItem(PAGE_SIZE_KEY, value);
+    setPageSize(value === "all" ? null : Number(value));
+    setPageNumber(1);
+  }
+
+  const cars: ArchiveCar[] = page?.items ?? [];
+  const pageCount = page && pageSize ? Math.max(1, Math.ceil(page.total / pageSize)) : 1;
+  const hasDetails = cars.some((car) => car.highlights.length > 0);
 
   return (
-    <section className="panel">
-      <div className="watchlist-toolbar">
-        <h1>Archive</h1>
-        {page && (
-          <span className="muted" data-testid="archive-usage">
-            {page.usage.items} listings · {page.usage.images} photos · {formatBytes(page.usage.bytes)}
-          </span>
-        )}
-      </div>
-      <form
-        className="compact-grid archive-filters"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setOffset(0);
-          setAppliedText(queryText.trim());
-        }}
-      >
-        <label>
-          Search text
+    <>
+      <section className="panel compact-form searches-panel search-detail-panel">
+        <div className="search-detail-bar">
+          <div className="search-detail-main">
+            <div className="search-detail-title">
+              <h1>Archive</h1>
+            </div>
+            <p className="search-detail-summary">
+              <span>Cars gone from every platform, with their saved pages and photos</span>
+              {page && (
+                <span data-testid="archive-usage">
+                  {page.usage.images} photos · {formatBytes(page.usage.bytes)}
+                </span>
+              )}
+            </p>
+          </div>
+          {page && (
+            <dl className="search-detail-stats">
+              <div>
+                <dt>Cars</dt>
+                <dd>{page.total}</dd>
+              </div>
+              <div className={page.gone_last_day > 0 ? "search-detail-stat-gone" : undefined}>
+                <dt>Gone 24h</dt>
+                <dd>{page.gone_last_day}</dd>
+              </div>
+            </dl>
+          )}
+        </div>
+        <form
+          className="archive-filter-row"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setPageNumber(1);
+            setAppliedText(queryText.trim());
+          }}
+        >
           <input
             type="search"
+            aria-label="Search text"
             value={queryText}
-            placeholder="Title or description"
+            placeholder="Search title or description"
             onChange={(event) => setQueryText(event.target.value)}
           />
-        </label>
-        <label>
-          Saved search
           <select
+            aria-label="Saved search"
             value={searchId}
             onChange={(event) => {
-              setOffset(0);
+              setPageNumber(1);
               setSearchId(event.target.value);
             }}
           >
@@ -189,27 +208,11 @@ function ArchiveList({ onNavigate }: { onNavigate: (href: string) => void }) {
               </option>
             ))}
           </select>
-        </label>
-        <label>
-          Status
           <select
-            value={status}
-            onChange={(event) => {
-              setOffset(0);
-              setStatus(event.target.value as "" | "online" | "gone");
-            }}
-          >
-            <option value="">Online and gone</option>
-            <option value="online">Online</option>
-            <option value="gone">Gone</option>
-          </select>
-        </label>
-        <label>
-          Platform
-          <select
+            aria-label="Platform"
             value={platform}
             onChange={(event) => {
-              setOffset(0);
+              setPageNumber(1);
               setPlatform(event.target.value);
             }}
           >
@@ -220,91 +223,156 @@ function ArchiveList({ onNavigate }: { onNavigate: (href: string) => void }) {
               </option>
             ))}
           </select>
-        </label>
-        <button type="submit">Search</button>
-      </form>
-      {error && <p className="error">{error}</p>}
+          <button type="submit" className="secondary">
+            Search
+          </button>
+        </form>
+        {error && <p className="error">{error}</p>}
+      </section>
 
-      {page && items.length === 0 ? (
-        <p className="muted">No archived listings found.</p>
-      ) : (
-        <div className="watchlist-table-scroll">
-          <table className="compact-table">
-            <thead>
-              <tr>
-                {sortHeader("title", "Listing")}
-                {sortHeader("price", "Price")}
-                <th>Details</th>
-                <th>Searches</th>
-                {sortHeader("first_seen", "First seen")}
-                {sortHeader("last_seen", "Last seen")}
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => {
-                const href = `/archive/${item.id}`;
-                const cover = coverUrl(item);
-                return (
-                  <tr
-                    key={item.id}
-                    className={item.gone_at ? "search-listing-gone" : undefined}
-                    data-testid={`archive-row-${item.item_id}`}
-                  >
-                    <td>
-                      <div className="product-cell">
-                        {cover ? (
-                          <img className="product-thumb" src={cover} alt="" loading="lazy" />
-                        ) : null}
-                        <div>
-                          <a href={href} className="product-link" onClick={navigateLink(href, onNavigate)}>
-                            {item.title}
-                          </a>
-                          <StatusPill item={item} />
+      <section className="panel searches-panel">
+        <div className="listings-toolbar">
+          <h2>
+            Cars <span className="listings-count">{page?.total ?? 0}</span>
+          </h2>
+          <label className="listings-page-size">
+            Per page
+            <select value={pageSize === null ? "all" : String(pageSize)} onChange={(event) => changePageSize(event.target.value)}>
+              {PAGE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+              <option value="all">All</option>
+            </select>
+          </label>
+        </div>
+        {cars.length === 0 ? (
+          <p className="muted">{page ? "No archived cars found." : "Loading…"}</p>
+        ) : (
+          <div className="watchlist-table-scroll">
+            <table className="compact-table listings-table">
+              <thead>
+                <tr>
+                  {sortHeader("title", "Listing")}
+                  {sortHeader("price", "Last price", "num")}
+                  {sortHeader("year", "Year", "num")}
+                  {sortHeader("mileage", "Mileage", "num")}
+                  {hasDetails && <th>Details</th>}
+                  <th>Platform</th>
+                  <th>Location</th>
+                  {sortHeader("gone", "Gone", "num")}
+                </tr>
+              </thead>
+              <tbody>
+                {cars.map((car) => {
+                  const href = `/archive/${car.id}`;
+                  const cover = coverUrl(car);
+                  const mileage = numericAttribute(car, "mileage");
+                  return (
+                    <tr key={car.id} data-testid={`archive-row-${car.item_id}`}>
+                      <td>
+                        <div className="listing-cell">
+                          {cover ? (
+                            <img className="listing-thumb" src={cover} alt="" loading="lazy" />
+                          ) : (
+                            <div className="listing-thumb" />
+                          )}
+                          <div className="listing-main">
+                            <a
+                              href={href}
+                              className="product-link listing-title"
+                              title={car.title}
+                              onClick={navigateLink(href, onNavigate)}
+                            >
+                              {car.title}
+                            </a>
+                            {car.searches.length > 0 && (
+                              <div className="compact-cell-sub muted">
+                                {car.searches.map((search) => search.name).join(", ")}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td>{formatEuro(item.price)}</td>
-                    <td>
-                      {carSummary(item.attributes) || "–"}
-                      <div className="compact-cell-sub muted">
-                        {[platformLabel(item.marketplace), item.city].filter(Boolean).join(" · ")}
-                      </div>
-                    </td>
-                    <td>{item.searches.map((search) => search.name).join(", ") || "–"}</td>
-                    <td>{formatDate(item.first_seen_at)}</td>
-                    <td>{formatDate(item.gone_at ?? item.last_seen_at)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {page && page.total > PAGE_SIZE && (
-        <div className="archive-pager">
-          <button
-            type="button"
-            className="secondary"
-            disabled={offset === 0}
-            onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-          >
-            Previous
-          </button>
-          <span className="muted">
-            {offset + 1}–{Math.min(offset + PAGE_SIZE, page.total)} of {page.total}
-          </span>
-          <button
-            type="button"
-            className="secondary"
-            disabled={offset + PAGE_SIZE >= page.total}
-            onClick={() => setOffset(offset + PAGE_SIZE)}
-          >
-            Next
-          </button>
-        </div>
-      )}
-    </section>
+                      </td>
+                      <td className="num">
+                        <strong>{formatEuro(car.price)}</strong>
+                      </td>
+                      <td className="num">{numericAttribute(car, "constructionYear") ?? "–"}</td>
+                      <td className="num">{mileage !== null ? `${mileage.toLocaleString("nl-NL")} km` : "–"}</td>
+                      {hasDetails && (
+                        <td>
+                          <div className="listing-highlights">
+                            {car.highlights.map((highlight) => (
+                              <span key={highlight} className="badge">
+                                {highlight}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      )}
+                      <td>
+                        <div className="listing-platforms" data-testid={`archive-platforms-${car.item_id}`}>
+                          {[{ id: car.id, marketplace: car.marketplace, price: car.price }, ...car.also_listed].map(
+                            (listing) => (
+                              <a
+                                key={listing.id}
+                                href={`/archive/${listing.id}`}
+                                className={`platform-badge platform-${listing.marketplace}`}
+                                title="Saved page"
+                                onClick={navigateLink(`/archive/${listing.id}`, onNavigate)}
+                              >
+                                {platformLabel(listing.marketplace)}
+                                {listing.price !== null && listing.price !== car.price && (
+                                  <span className="platform-badge-price"> {formatEuro(listing.price)}</span>
+                                )}
+                              </a>
+                            ),
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="listing-location">
+                          <CountryFlag code={listingCountry(car)} />
+                          <span>{car.city ?? "–"}</span>
+                        </div>
+                      </td>
+                      <td className="num">
+                        {car.gone_at ? formatShortDate(car.gone_at) : "online"}
+                        <div className="compact-cell-sub muted">since {formatShortDate(car.first_seen_at)}</div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {pageCount > 1 && (
+          <nav className="listings-pager" aria-label="Pages">
+            <button
+              type="button"
+              className="secondary"
+              disabled={pageNumber <= 1}
+              onClick={() => setPageNumber(pageNumber - 1)}
+            >
+              ← Previous
+            </button>
+            <span className="muted">
+              Page {pageNumber} of {pageCount}
+            </span>
+            <button
+              type="button"
+              className="secondary"
+              disabled={pageNumber >= pageCount}
+              onClick={() => setPageNumber(pageNumber + 1)}
+            >
+              Next →
+            </button>
+          </nav>
+        )}
+      </section>
+    </>
   );
 }
 

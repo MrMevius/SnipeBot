@@ -48,6 +48,7 @@ from snipebot.adapters.marketplaces.marktplaats_listing import (
 )
 from snipebot.core.config import Settings
 from snipebot.core.metrics import metrics
+from snipebot.domain.same_car import group_same_cars
 from snipebot.persistence.models import (
     MarketplaceItem,
     MarketplaceItemImage,
@@ -542,65 +543,153 @@ def _backoff_seconds(attempt: int, settings: Settings) -> int:
 # --- Queries used by the API --------------------------------------------------
 
 
-def list_archive_items(
+@dataclass(slots=True)
+class _ItemView:
+    """An archive item seen as a listing, for ``group_same_cars``."""
+
+    item: MarketplaceItem
+
+    @property
+    def marketplace(self) -> str:
+        return self.item.marketplace
+
+    @property
+    def title(self) -> str:
+        return self.item.title
+
+    @property
+    def city(self) -> str | None:
+        return self.item.city
+
+    @property
+    def current_price(self) -> Decimal | None:
+        return self.item.price
+
+    @property
+    def attributes_json(self) -> str:
+        return self.item.summary_attributes_json or "{}"
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def car_gone_at(car: list[MarketplaceItem]) -> datetime | None:
+    """When the last listing of a car went; None while one is still online."""
+    if any(item.gone_at is None for item in car):
+        return None
+    return max(_aware(item.gone_at) for item in car)
+
+
+def car_first_seen_at(car: list[MarketplaceItem]) -> datetime:
+    return min(_aware(item.first_seen_at) for item in car)
+
+
+def archive_cars(db_session: Session, *, owner_id: str) -> list[list[MarketplaceItem]]:
+    """Archive items grouped per car, like a search's listings (``same_car``).
+
+    Listings with the same license plate count as one car too. The main item
+    comes first: the cheapest one still online, else the cheapest.
+    """
+    items = db_session.scalars(
+        select(MarketplaceItem)
+        .where(MarketplaceItem.owner_id == owner_id)
+        .order_by(MarketplaceItem.first_seen_at, MarketplaceItem.id)
+    ).all()
+    groups = [[view.item for view in group] for group in group_same_cars(_ItemView(item) for item in items)]
+    by_plate: dict[str, list[MarketplaceItem]] = {}
+    cars: list[list[MarketplaceItem]] = []
+    for group in groups:
+        plates = {item.license_plate for item in group if item.license_plate}
+        target = next((by_plate[plate] for plate in plates if plate in by_plate), None)
+        if target is None:
+            target = group
+            cars.append(group)
+        else:
+            target.extend(group)
+        for plate in plates:
+            by_plate.setdefault(plate, target)
+    for car in cars:
+        car.sort(
+            key=lambda item: (
+                item.gone_at is not None,
+                item.price if item.price is not None else Decimal("Infinity"),
+                item.id,
+            )
+        )
+    return cars
+
+
+def _car_sort_value(car: list[MarketplaceItem], column: str) -> str | float | None:
+    main = car[0]
+    if column == "title":
+        return main.title.lower()
+    if column == "price":
+        return float(main.price) if main.price is not None else None
+    if column == "first_seen":
+        return car_first_seen_at(car).timestamp()
+    if column == "gone":
+        gone_at = car_gone_at(car)
+        return gone_at.timestamp() if gone_at else None
+    key = "constructionYear" if column == "year" else "mileage"
+    value = json.loads(main.summary_attributes_json or "{}").get(key)
+    try:
+        return float(value) if value else None
+    except ValueError:
+        return None
+
+
+def list_archive_cars(
     db_session: Session,
     *,
     owner_id: str,
     q: str | None = None,
     search_id: int | None = None,
-    status: str | None = None,
+    status: str = "gone",
     marketplace: str | None = None,
-    sort: str = "first_seen",
-    order: str = "desc",
-    limit: int = 50,
-    offset: int = 0,
-) -> tuple[list[MarketplaceItem], int]:
-    conditions = [MarketplaceItem.owner_id == owner_id]
-    if q and q.strip():
-        pattern = f"%{q.strip()}%"
-        conditions.append(
-            or_(
-                MarketplaceItem.title.ilike(pattern),
-                MarketplaceItem.description_text.ilike(pattern),
-            )
-        )
+    sort: str = "gone",
+    direction: str = "desc",
+) -> list[list[MarketplaceItem]]:
+    """Cars in the archive; by default only cars gone from every platform.
+
+    A filter matches a car when one of its listings matches. Cars without a
+    value for the sort column stay at the bottom in both directions.
+    """
+    cars = archive_cars(db_session, owner_id=owner_id)
+    if status == "gone":
+        cars = [car for car in cars if car_gone_at(car) is not None]
+    elif status == "online":
+        cars = [car for car in cars if car_gone_at(car) is None]
+    if marketplace:
+        cars = [car for car in cars if any(item.marketplace == marketplace for item in car)]
     if search_id is not None:
-        conditions.append(
-            MarketplaceItem.item_id.in_(
+        in_search = set(
+            db_session.scalars(
                 select(MarketplaceListing.item_id)
                 .join(MarketplaceSearch, MarketplaceSearch.id == MarketplaceListing.search_id)
-                .where(
-                    MarketplaceSearch.id == search_id,
-                    MarketplaceSearch.owner_id == owner_id,
-                )
+                .where(MarketplaceSearch.id == search_id, MarketplaceSearch.owner_id == owner_id)
             )
         )
-    if marketplace is not None:
-        conditions.append(MarketplaceItem.marketplace == marketplace)
-    if status == "online":
-        conditions.append(MarketplaceItem.gone_at.is_(None))
-    elif status == "gone":
-        conditions.append(MarketplaceItem.gone_at.is_not(None))
+        cars = [car for car in cars if any(item.item_id in in_search for item in car)]
+    if q and q.strip():
+        needle = q.strip().lower()
+        cars = [
+            car
+            for car in cars
+            if any(
+                needle in item.title.lower() or needle in (item.description_text or "").lower()
+                for item in car
+            )
+        ]
+    keyed = [(_car_sort_value(car, sort), car) for car in cars]
+    present = [entry for entry in keyed if entry[0] is not None]
+    present.sort(key=lambda entry: entry[0], reverse=direction == "desc")
+    return [car for _, car in present] + [car for value, car in keyed if value is None]
 
-    column = {
-        "first_seen": MarketplaceItem.first_seen_at,
-        "last_seen": MarketplaceItem.last_seen_at,
-        "price": MarketplaceItem.price,
-        "title": func.lower(MarketplaceItem.title),
-    }.get(sort, MarketplaceItem.first_seen_at)
-    ordering = column.asc() if order == "asc" else column.desc()
 
-    total = db_session.scalar(
-        select(func.count()).select_from(MarketplaceItem).where(*conditions)
-    )
-    items = db_session.scalars(
-        select(MarketplaceItem)
-        .where(*conditions)
-        .order_by(column.is_(None), ordering, MarketplaceItem.id.desc())
-        .limit(limit)
-        .offset(offset)
-    ).all()
-    return list(items), int(total or 0)
+def archive_gone_last_day(cars: list[list[MarketplaceItem]], now: datetime | None = None) -> int:
+    since = (now or datetime.now(UTC)) - timedelta(hours=24)
+    return sum(1 for car in cars if (gone_at := car_gone_at(car)) is not None and gone_at >= since)
 
 
 def get_archive_item(

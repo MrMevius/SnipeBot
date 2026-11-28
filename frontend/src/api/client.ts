@@ -836,23 +836,34 @@ export type ArchiveUsage = {
   bytes: number;
 };
 
+// A car in the archive: its main listing, with the car's other platforms.
+// first_seen_at: car first found; gone_at: its last listing went.
+export type ArchiveCar = ArchiveItemSummary & {
+  also_listed: { id: number; marketplace: string; url: string; price: number | null; gone_at: string | null }[];
+  highlights: string[];
+};
+
 export type ArchiveListResponse = {
-  items: ArchiveItemSummary[];
+  items: ArchiveCar[];
+  // Cars matching the request before paging.
   total: number;
-  limit: number;
-  offset: number;
+  page: number;
+  page_size: number | null;
+  // Cars whose last listing went in the last 24 hours.
+  gone_last_day: number;
   usage: ArchiveUsage;
 };
 
 export type ArchiveQuery = {
   q?: string;
   search_id?: number;
-  status?: "online" | "gone";
+  // Default: cars gone from every platform.
+  status?: "gone" | "online" | "all";
   marketplace?: string;
-  sort?: "first_seen" | "last_seen" | "price" | "title";
-  order?: "asc" | "desc";
-  limit?: number;
-  offset?: number;
+  sort?: "gone" | "first_seen" | "price" | "title" | "year" | "mileage";
+  direction?: "asc" | "desc";
+  page?: number;
+  page_size?: number;
 };
 
 export type ArchiveAttributeGroup = {

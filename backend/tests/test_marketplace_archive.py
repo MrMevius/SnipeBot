@@ -448,17 +448,17 @@ def test_archive_api(settings, tmp_path) -> None:
         archive_ids = {row["item_id"]: row["archive_id"] for row in listings}
         assert all(archive_ids.values())
 
-        page = client.get("/archive", params={"sort": "title", "order": "asc"}).json()
+        page = client.get("/archive", params={"status": "all", "sort": "title", "direction": "asc"}).json()
         assert page["total"] == 2
         assert [item["item_id"] for item in page["items"]] == ["m4", "m5"]
         assert page["items"][0]["searches"] == [{"id": search_id, "name": "Golf"}]
         assert page["usage"]["images"] == 4
         assert page["usage"]["bytes"] > 0
 
-        found = client.get("/archive", params={"q": "schuifdak"}).json()
+        found = client.get("/archive", params={"status": "all", "q": "schuifdak"}).json()
         assert [item["item_id"] for item in found["items"]] == ["m4"]
         assert client.get("/archive", params={"status": "gone"}).json()["total"] == 0
-        assert client.get("/archive", params={"search_id": search_id}).json()["total"] == 2
+        assert client.get("/archive", params={"status": "all", "search_id": search_id}).json()["total"] == 2
 
         detail = client.get(f"/archive/{archive_ids['m5']}").json()
         assert detail["description_html"] == "<strong>Nette auto</strong><br>Eerste eigenaar."
@@ -477,7 +477,7 @@ def test_archive_api(settings, tmp_path) -> None:
 
         # Deleting the search keeps the archive.
         assert client.delete(f"/searches/{search_id}").status_code == 204
-        assert client.get("/archive").json()["total"] == 2
+        assert client.get("/archive", params={"status": "all"}).json()["total"] == 2
 
         folder = tmp_path / "archive" / "marktplaats" / "m5"
         assert folder.is_dir()
@@ -500,4 +500,57 @@ def test_archive_detail_is_owner_scoped(settings) -> None:
 
     client = TestClient(app)
     assert client.get(f"/archive/{item.id}", headers={"x-owner-id": "someone-else"}).status_code == 404
-    assert client.get("/archive", headers={"x-owner-id": "someone-else"}).json()["total"] == 0
+    assert client.get("/archive", params={"status": "all"}, headers={"x-owner-id": "someone-else"}).json()["total"] == 0
+
+
+def _stored_item(item_id: str, marketplace: str, *, gone_hours_ago: float | None, price: int, **extra) -> None:
+    now = datetime.now(UTC)
+    with get_session_factory()() as session:
+        session.add(
+            MarketplaceItem(
+                owner_id="local",
+                marketplace=marketplace,
+                item_id=item_id,
+                url=f"https://example.test/{item_id}",
+                title=extra.pop("title", "Tesla Model 3 Long Range AWD"),
+                listing_title="Tesla Model 3",
+                price=Decimal(price),
+                city="Almelo",
+                summary_attributes_json=json.dumps(
+                    {"constructionYear": "2024", "mileage": extra.pop("mileage", "30000")}
+                ),
+                status="gone" if gone_hours_ago is not None else "archived",
+                first_seen_at=now - timedelta(days=3),
+                last_seen_at=now,
+                gone_at=now - timedelta(hours=gone_hours_ago) if gone_hours_ago is not None else None,
+                **extra,
+            )
+        )
+        session.commit()
+
+
+def test_archive_lists_cars_gone_from_every_platform(settings) -> None:
+    # Car 1: gone on both platforms. Car 2: gone on one, still online on the other.
+    _stored_item("a1", "marktplaats", gone_hours_ago=2, price=40000, title="Tesla Model 3 AWD trekhaak")
+    _stored_item("a2", "autoscout24", gone_hours_ago=30, price=39500)
+    _stored_item("b1", "marktplaats", gone_hours_ago=1, price=35000, mileage="51000")
+    _stored_item("b2", "viabovag", gone_hours_ago=None, price=35000, mileage="51000")
+    # Car 3: same plate, nothing else alike.
+    _stored_item("c1", "marktplaats", gone_hours_ago=50, price=30000, mileage="9000", license_plate="S123AB")
+    _stored_item("c2", "viabovag", gone_hours_ago=60, price=20000, mileage="8000", license_plate="S123AB")
+
+    client = TestClient(app)
+    body = client.get("/archive", params={"page_size": 1}).json()
+    assert (body["total"], body["gone_last_day"], body["page_size"]) == (2, 1, 1)
+    [car] = body["items"]
+    # Newest gone first; the cheapest listing leads, the other platform is linked.
+    assert (car["item_id"], [other["url"] for other in car["also_listed"]]) == ("a2", ["https://example.test/a1"])
+    assert car["highlights"] == ["AWD", "Tow hitch"]
+
+    second = client.get("/archive", params={"page_size": 1, "page": 2}).json()["items"]
+    assert [(item["item_id"], len(item["also_listed"])) for item in second] == [("c2", 1)]
+
+    by_price = client.get("/archive", params={"sort": "price", "direction": "asc"}).json()["items"]
+    assert [item["item_id"] for item in by_price] == ["c2", "a2"]
+    online = client.get("/archive", params={"status": "online"}).json()["items"]
+    assert [item["item_id"] for item in online] == ["b2"]

@@ -330,9 +330,11 @@ def test_duplicates_across_platforms_by_license_plate(settings, tmp_path) -> Non
     app.dependency_overrides[get_archive_store] = lambda: ArchiveStore(tmp_path / "archive")
     try:
         client = TestClient(app)
-        items = client.get("/archive", params={"marketplace": "autotrack"}).json()["items"]
-        assert [(item["marketplace"], item["item_id"]) for item in items] == [("autotrack", uuid(1))]
-        detail = client.get(f"/archive/{items[0]['id']}").json()
+        # One car: the same plate on both platforms.
+        [car] = client.get("/archive", params={"status": "all", "marketplace": "autotrack"}).json()["items"]
+        platforms = {car["marketplace"]: car["id"]} | {other["marketplace"]: other["id"] for other in car["also_listed"]}
+        assert set(platforms) == {"autotrack", "marktplaats"}
+        detail = client.get(f"/archive/{platforms['autotrack']}").json()
         assert detail["license_plate"] == "S123AB"
         assert [(other["marketplace"], other["title"]) for other in detail["duplicates"]] == [
             ("marktplaats", "Volkswagen Golf 100")
