@@ -718,6 +718,20 @@ def archive_ids_for(db_session: Session, *, owner_id: str, item_ids: list[str]) 
     return {row.item_id: row.id for row in rows}
 
 
+def item_descriptions(db_session: Session, *, owner_id: str, item_ids: list[str]) -> dict[str, str]:
+    """Archived description text per listing id (listings not archived yet are missing)."""
+    if not item_ids:
+        return {}
+    rows = db_session.execute(
+        select(MarketplaceItem.item_id, MarketplaceItem.description_text).where(
+            MarketplaceItem.owner_id == owner_id,
+            MarketplaceItem.item_id.in_(item_ids),
+            MarketplaceItem.description_text.is_not(None),
+        )
+    ).all()
+    return {row.item_id: row.description_text for row in rows}
+
+
 def item_searches(
     db_session: Session, *, owner_id: str, item_ids: list[str]
 ) -> dict[str, list[tuple[int, str]]]:

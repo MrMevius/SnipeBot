@@ -334,7 +334,8 @@ def _car_summary(
             for item in others
         ],
         highlights=car_highlights(
-            (item.title, json.loads(item.summary_attributes_json or "{}")) for item in car
+            (item.title, json.loads(item.summary_attributes_json or "{}"), item.description_text)
+            for item in car
         ),
     )
 
