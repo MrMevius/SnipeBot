@@ -1,6 +1,7 @@
 import { FormEvent, MouseEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  ListingSortColumn,
   MarketplaceListing,
   MarketplaceSearch,
   MarketplaceSearchPreview,
@@ -192,40 +193,17 @@ function numericAttribute(listing: MarketplaceListing, key: string): number | nu
   return listing.attributes[key] && Number.isFinite(value) ? value : null;
 }
 
-function carDetails(attributes: Record<string, string>): string {
-  const variant = attributes.variant
-    ? attributes.variant
-        .split(",")
-        .map((key) => VARIANT_OPTIONS.find((option) => option.key === key)?.label ?? key)
-        .join(" / ")
-    : null;
-  return [variant, attributes.fuel, attributes.transmission].filter(Boolean).join(" · ");
-}
-
-type ListingSortColumn = "title" | "price" | "year" | "mileage" | "distance" | "first_seen";
 type ListingSort = { column: ListingSortColumn; direction: "asc" | "desc" };
 
-const LISTING_SORT_VALUE: Record<ListingSortColumn, (listing: MarketplaceListing) => string | number | null> = {
-  title: (listing) => listing.title.toLowerCase(),
-  price: (listing) => listing.current_price,
-  year: (listing) => numericAttribute(listing, "constructionYear"),
-  mileage: (listing) => numericAttribute(listing, "mileage"),
-  distance: (listing) => listing.distance_km,
-  first_seen: (listing) => listing.first_seen_at,
-};
+const PAGE_SIZES = [25, 50, 100] as const;
+const PAGE_SIZE_KEY = "snipebot.listingsPageSize";
 
-// Listings without a value (e.g. price on request) stay at the bottom in both directions.
-function sortListings(listings: MarketplaceListing[], sort: ListingSort): MarketplaceListing[] {
-  const valueOf = LISTING_SORT_VALUE[sort.column];
-  const factor = sort.direction === "asc" ? 1 : -1;
-  return [...listings].sort((left, right) => {
-    const a = valueOf(left);
-    const b = valueOf(right);
-    if (a === null || b === null) {
-      return a === b ? 0 : a === null ? 1 : -1;
-    }
-    return (a < b ? -1 : a > b ? 1 : 0) * factor;
-  });
+// Cars per page on a search; null shows all at once.
+function storedPageSize(): number | null {
+  const stored = window.localStorage.getItem(PAGE_SIZE_KEY);
+  if (stored === "all") return null;
+  const value = Number(stored);
+  return PAGE_SIZES.includes(value as (typeof PAGE_SIZES)[number]) ? value : PAGE_SIZES[0];
 }
 
 function SellerSelect({
@@ -1017,6 +995,8 @@ function SearchDetail({
 }) {
   const [search, setSearch] = useState<MarketplaceSearch | null>(null);
   const [listings, setListings] = useState<MarketplaceListing[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -1025,20 +1005,16 @@ function SearchDetail({
   const [sellerType, setSellerType] = useState<SellerType>("all");
   const [ceiling, setCeiling] = useState("");
   const [unknownPolicy, setUnknownPolicy] = useState<UnknownPolicy>("include");
-  const [showGone, setShowGone] = useState(false);
   const [distanceFrom, setDistanceFrom] = useState<string | null>(null);
   const [listingSort, setListingSort] = useState<ListingSort>({ column: "first_seen", direction: "desc" });
+  const [pageSize, setPageSize] = useState<number | null>(storedPageSize);
+  const [page, setPage] = useState(1);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
+  const loadSearch = useCallback(async () => {
     try {
-      const [searchPayload, listingPayload] = await Promise.all([
-        fetchMarketplaceSearch(searchId),
-        fetchMarketplaceListings(searchId),
-      ]);
+      const searchPayload = await fetchMarketplaceSearch(searchId);
       setSearch(searchPayload);
-      setListings(listingPayload.items);
-      setDistanceFrom(listingPayload.distance_from ?? null);
       setName(searchPayload.name);
       setFilterForm(filterFormFrom(searchPayload));
       setKeywords(searchPayload.exclude_keywords.join(", "));
@@ -1055,9 +1031,32 @@ function SearchDetail({
     }
   }, [searchId]);
 
+  const loadListings = useCallback(async () => {
+    try {
+      const listingPayload = await fetchMarketplaceListings(searchId, {
+        includeGone: false,
+        sort: listingSort.column,
+        direction: listingSort.direction,
+        page,
+        pageSize,
+      });
+      setListings(listingPayload.items);
+      setTotal(listingPayload.total ?? listingPayload.items.length);
+      setDistanceFrom(listingPayload.distance_from ?? null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoaded(true);
+    }
+  }, [searchId, listingSort, page, pageSize]);
+
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadSearch();
+  }, [loadSearch]);
+
+  useEffect(() => {
+    void loadListings();
+  }, [loadListings]);
 
   async function handleSave(event: FormEvent) {
     event.preventDefault();
@@ -1089,7 +1088,7 @@ function SearchDetail({
         ...(filters ? { filters, platforms: filterForm.platforms } : {}),
       });
       setFeedback("Saved.");
-      await load();
+      await Promise.all([loadSearch(), loadListings()]);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -1097,14 +1096,18 @@ function SearchDetail({
     }
   }
 
-  const visible = sortListings(
-    listings.filter((listing) => showGone || listing.gone_at === null),
-    listingSort,
-  );
+  function changePageSize(value: string) {
+    const next = value === "all" ? null : Number(value);
+    window.localStorage.setItem(PAGE_SIZE_KEY, value);
+    setPageSize(next);
+    setPage(1);
+  }
+
   const hasYear = listings.some((listing) => numericAttribute(listing, "constructionYear") !== null);
   const hasMileage = listings.some((listing) => numericAttribute(listing, "mileage") !== null);
-  const hasDetails = listings.some((listing) => carDetails(listing.attributes) !== "");
+  const hasDetails = listings.some((listing) => (listing.highlights ?? []).length > 0);
   const multiPlatform = (search?.platforms.length ?? 0) > 1;
+  const pageCount = pageSize ? Math.max(1, Math.ceil(total / pageSize)) : 1;
 
   function sortHeader(column: ListingSortColumn, label: string, className?: string) {
     const active = listingSort.column === column;
@@ -1116,12 +1119,13 @@ function SearchDetail({
         <button
           type="button"
           className="sort-button"
-          onClick={() =>
+          onClick={() => {
             setListingSort({
               column,
               direction: active && listingSort.direction === "asc" ? "desc" : "asc",
-            })
-          }
+            });
+            setPage(1);
+          }}
         >
           {label}{" "}
           <span className="sort-indicator">{active ? (listingSort.direction === "asc" ? "↑" : "↓") : "↕"}</span>
@@ -1129,26 +1133,26 @@ function SearchDetail({
       </th>
     );
   }
-  const goneCount = listings.length - listings.filter((listing) => listing.gone_at === null).length;
 
   return (
     <>
-      <section className="panel compact-form searches-panel">
-        <a
-          href="/searches"
-          className="search-back-link"
-          onClick={(event) => {
-            event.preventDefault();
-            onNavigate("/searches");
-          }}
-        >
-          ← All car searches
-        </a>
+      <section className="panel compact-form searches-panel search-detail-panel">
         {search && (
           <>
-            <div className="searches-head search-detail-head">
-              <div className="searches-intro">
+            <div className="search-detail-bar">
+              <div className="search-detail-main">
                 <div className="search-detail-title">
+                  <a
+                    href="/searches"
+                    className="search-back-link"
+                    title="All car searches"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onNavigate("/searches");
+                    }}
+                  >
+                    ←
+                  </a>
                   <h1>{search.name}</h1>
                   <span
                     className={`search-status search-status-${search.active ? statusTone(search.last_status) : "paused"}`}
@@ -1157,113 +1161,114 @@ function SearchDetail({
                     <span className="search-status-dot" aria-hidden="true" />
                     {statusLabel(search)}
                   </span>
+                  <span className="muted search-detail-checked">checked {formatDate(search.last_checked_at)}</span>
                 </div>
-                <p className="muted">
-                  Last check {formatDate(search.last_checked_at)}
+                <p className="search-detail-summary">
+                  {search.description.map((line) => {
+                    const [label, value] = splitDescription(line);
+                    return (
+                      <span key={line} title={label}>
+                        {value}
+                      </span>
+                    );
+                  })}
+                  <span title="Alerts" className="search-detail-alert">
+                    {search.alert_max_price === null ? "Alerts off" : `Alerts ≤ ${formatEuro(search.alert_max_price)}`}
+                  </span>
+                  <span title="Value not stated">Not stated: {UNKNOWN_POLICY_LABELS[search.unknown_policy]}</span>
                 </p>
               </div>
-              <dl className="searches-kpis">
-                <div className="searches-kpi">
+              <dl className="search-detail-stats">
+                <div>
                   <dt>Listings</dt>
                   <dd>{search.listing_count}</dd>
                 </div>
-                <div className={`searches-kpi${search.new_listing_count > 0 ? " searches-kpi-new" : ""}`}>
-                  <dt>New</dt>
-                  <dd>{search.new_listing_count}</dd>
+                <div className={(search.new_last_day_count ?? 0) > 0 ? "search-detail-stat-new" : undefined}>
+                  <dt>New 24h</dt>
+                  <dd>{search.new_last_day_count ?? "–"}</dd>
                 </div>
-                <div className="searches-kpi">
+                <div className={(search.gone_last_day_count ?? 0) > 0 ? "search-detail-stat-gone" : undefined}>
+                  <dt>Gone 24h</dt>
+                  <dd>{search.gone_last_day_count ?? "–"}</dd>
+                </div>
+                <div>
                   <dt>Cheapest</dt>
                   <dd>{search.cheapest ? formatEuro(search.cheapest.price) : "–"}</dd>
                 </div>
               </dl>
             </div>
-            <dl className="search-specs search-detail-specs">
-              {search.description.map((line) => {
-                const [label, value] = splitDescription(line);
-                return (
-                  <div key={line} className="search-spec">
-                    <dt>{label}</dt>
-                    <dd>{value}</dd>
-                  </div>
-                );
-              })}
-              <div className="search-spec search-spec-accent">
-                <dt>Alerts</dt>
-                <dd>{search.alert_max_price === null ? "Off" : `≤ ${formatEuro(search.alert_max_price)}`}</dd>
-              </div>
-              <div className="search-spec">
-                <dt>Not stated</dt>
-                <dd>{UNKNOWN_POLICY_LABELS[search.unknown_policy]}</dd>
-              </div>
-            </dl>
-            <h2 className="search-section-label">Platforms</h2>
-            <div className="search-source-grid">
+            <div className="search-detail-sources">
               {search.platforms.map((platform) => (
-                <div key={platform.marketplace} className="search-source-card" data-testid={`source-${platform.marketplace}`}>
-                  <div className="search-source-head">
-                    <strong>{platform.label}</strong>
-                    <span className={`search-status search-status-${sourceTone(platform)}`}>
-                      <span className="search-status-dot" aria-hidden="true" />
-                      {sourceStatus(platform)}
-                    </span>
-                  </div>
-                  <div className="search-source-count">
-                    {platform.last_total_count ?? "–"} <span className="muted">results</span>
-                  </div>
-                  <div className="muted search-source-meta">Last check {formatDate(platform.last_checked_at)}</div>
-                  {postFilterNote(platform.post_filters) && (
-                    <div className="muted search-source-meta">{postFilterNote(platform.post_filters)}</div>
-                  )}
-                  {platform.last_error_message && (
-                    <div className="error search-source-meta">{platform.last_error_message}</div>
-                  )}
-                </div>
+                <span
+                  key={platform.marketplace}
+                  className={`search-source-chip search-status-${sourceTone(platform)}`}
+                  data-testid={`source-${platform.marketplace}`}
+                  title={[
+                    `${platform.label}: ${sourceStatus(platform)}`,
+                    `Last check ${formatDate(platform.last_checked_at)}`,
+                    postFilterNote(platform.post_filters),
+                    platform.last_error_message,
+                  ]
+                    .filter(Boolean)
+                    .join("\n")}
+                >
+                  <span className="search-status-dot" aria-hidden="true" />
+                  {platform.label}
+                  <strong>{platform.last_total_count ?? "–"}</strong>
+                </span>
               ))}
+              <details className="search-edit">
+                <summary>Edit search</summary>
+                <form onSubmit={handleSave}>
+                  <div className="compact-grid search-form-grid">
+                    <label>
+                      Name
+                      <input
+                        type="text"
+                        value={name}
+                        required
+                        onChange={(event) => setName(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <SearchFilterFields value={filterForm} onChange={setFilterForm} />
+                  <div className="compact-grid search-form-grid">
+                    <label>
+                      Exclude words (comma separated)
+                      <input
+                        type="text"
+                        value={keywords}
+                        onChange={(event) => setKeywords(event.target.value)}
+                      />
+                    </label>
+                    <SellerSelect value={sellerType} onChange={setSellerType} />
+                    <CeilingInput value={ceiling} onChange={setCeiling} />
+                    <UnknownPolicySelect value={unknownPolicy} onChange={setUnknownPolicy} />
+                    <button type="submit" disabled={busy}>
+                      Save changes
+                    </button>
+                  </div>
+                </form>
+                <p className="muted">
+                  Changing filters, exclude words or seller records the current listings silently again;
+                  a newly added platform starts the same way.
+                  Telegram alerts only for listings at or below the price ceiling; empty = no alerts.
+                </p>
+              </details>
             </div>
+            {search.platforms
+              .filter((platform) => platform.last_error_message)
+              .map((platform) => (
+                <p key={platform.marketplace} className="error search-detail-note">
+                  {platform.label}: {platform.last_error_message}
+                </p>
+              ))}
             {search.filters === null && (
-              <p className="muted">
+              <p className="muted search-detail-note">
                 This search was created from a Marktplaats URL. Choose a make and model to switch it to
                 filters and add platforms.
               </p>
             )}
-            <details className="search-edit">
-              <summary>Edit search</summary>
-              <form onSubmit={handleSave}>
-                <div className="compact-grid search-form-grid">
-                  <label>
-                    Name
-                    <input
-                      type="text"
-                      value={name}
-                      required
-                      onChange={(event) => setName(event.target.value)}
-                    />
-                  </label>
-                </div>
-                <SearchFilterFields value={filterForm} onChange={setFilterForm} />
-                <div className="compact-grid search-form-grid">
-                  <label>
-                    Exclude words (comma separated)
-                    <input
-                      type="text"
-                      value={keywords}
-                      onChange={(event) => setKeywords(event.target.value)}
-                    />
-                  </label>
-                  <SellerSelect value={sellerType} onChange={setSellerType} />
-                  <CeilingInput value={ceiling} onChange={setCeiling} />
-                  <UnknownPolicySelect value={unknownPolicy} onChange={setUnknownPolicy} />
-                  <button type="submit" disabled={busy}>
-                    Save changes
-                  </button>
-                </div>
-              </form>
-              <p className="muted">
-                Changing filters, exclude words or seller records the current listings silently again;
-                a newly added platform starts the same way.
-                Telegram alerts only for listings at or below the price ceiling; empty = no alerts.
-              </p>
-            </details>
           </>
         )}
         {error && <p className="error">{error}</p>}
@@ -1273,21 +1278,25 @@ function SearchDetail({
       <section className="panel searches-panel">
         <div className="listings-toolbar">
           <h2>
-            Listings <span className="listings-count">{visible.length}</span>
+            Listings <span className="listings-count">{total}</span>
           </h2>
-          {goneCount > 0 && (
-            <label className="toggle-row listings-gone-toggle">
-              <input
-                type="checkbox"
-                checked={showGone}
-                onChange={(event) => setShowGone(event.target.checked)}
-              />
-              Show {goneCount} gone
-            </label>
-          )}
+          <label className="listings-page-size">
+            Per page
+            <select
+              value={pageSize === null ? "all" : String(pageSize)}
+              onChange={(event) => changePageSize(event.target.value)}
+            >
+              {PAGE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+              <option value="all">All</option>
+            </select>
+          </label>
         </div>
-        {visible.length === 0 ? (
-          <p className="muted">No listings recorded yet.</p>
+        {listings.length === 0 ? (
+          <p className="muted">{loaded ? "No listings recorded yet." : "Loading…"}</p>
         ) : (
           <div className="watchlist-table-scroll">
             <table className="compact-table listings-table">
@@ -1304,12 +1313,8 @@ function SearchDetail({
                 </tr>
               </thead>
               <tbody>
-                {visible.map((listing) => (
-                  <tr
-                    key={listing.id}
-                    className={listing.gone_at ? "search-listing-gone" : undefined}
-                    data-testid={`listing-row-${listing.item_id}`}
-                  >
+                {listings.map((listing) => (
+                  <tr key={listing.id} data-testid={`listing-row-${listing.item_id}`}>
                     <td>
                       <div className="listing-cell">
                         {listing.image_url ? (
@@ -1344,10 +1349,9 @@ function SearchDetail({
                               {listing.title}
                             </a>
                           )}
-                          {(listing.is_new || listing.gone_at || listing.unverified_filters.length > 0) && (
+                          {(listing.is_new || listing.unverified_filters.length > 0) && (
                             <div className="listing-badges">
                               {listing.is_new && <span className="badge badge-new">new</span>}
-                              {listing.gone_at && <span className="badge">gone</span>}
                               {listing.unverified_filters.length > 0 && (
                                 <span
                                   className="badge badge-warn"
@@ -1371,7 +1375,17 @@ function SearchDetail({
                         {numericAttribute(listing, "mileage") !== null ? " km" : ""}
                       </td>
                     )}
-                    {hasDetails && <td>{carDetails(listing.attributes) || "–"}</td>}
+                    {hasDetails && (
+                      <td>
+                        <div className="listing-highlights">
+                          {(listing.highlights ?? []).map((highlight) => (
+                            <span key={highlight} className="badge">
+                              {highlight}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                    )}
                     {multiPlatform && (
                       <td>
                         <div className="listing-platforms" data-testid={`listing-platforms-${listing.item_id}`}>
@@ -1421,6 +1435,24 @@ function SearchDetail({
               </tbody>
             </table>
           </div>
+        )}
+        {pageCount > 1 && (
+          <nav className="listings-pager" aria-label="Pages">
+            <button type="button" className="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+              ← Previous
+            </button>
+            <span className="muted">
+              Page {page} of {pageCount}
+            </span>
+            <button
+              type="button"
+              className="secondary"
+              disabled={page >= pageCount}
+              onClick={() => setPage(page + 1)}
+            >
+              Next →
+            </button>
+          </nav>
         )}
       </section>
     </>

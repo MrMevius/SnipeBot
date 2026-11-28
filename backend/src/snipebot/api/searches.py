@@ -20,6 +20,7 @@ from snipebot.api.deps import (
     get_request_identity,
 )
 from snipebot.core.metrics import metrics
+from snipebot.domain.listing_highlights import car_highlights
 from snipebot.domain.marketplace_archive import archive_ids_for
 from snipebot.domain.marketplace_searches import (
     MergedOption,
@@ -187,6 +188,8 @@ class SearchResponse(BaseModel):
     last_total_count: int | None
     listing_count: int
     new_listing_count: int
+    new_last_day_count: int
+    gone_last_day_count: int
     cheapest: CheapestListingResponse | None
     created_at: datetime
 
@@ -234,11 +237,17 @@ class ListingResponse(BaseModel):
     price_history: list[ListingPricePointResponse]
     archive_id: int | None = None
     also_listed: list[AlsoListedResponse] = []
+    # Details that tell cars apart (drive, tow hitch), from all the car's listings.
+    highlights: list[str] = []
 
 
 class ListingListResponse(BaseModel):
     search_id: int
     items: list[ListingResponse]
+    # Cars matching the request before paging.
+    total: int
+    page: int
+    page_size: int | None
     # Name of the place distances are measured from (straight line), if set.
     distance_from: str | None = None
 
@@ -274,7 +283,7 @@ def _cheapest_response(
 
 
 def _to_response(db_session: Session, search: MarketplaceSearch) -> SearchResponse:
-    listing_count, new_count = search_listing_counts(db_session, search)
+    counts = search_listing_counts(db_session, search)
     status = search_status(search)
     filters = get_search_filters(search)
     return SearchResponse(
@@ -309,8 +318,10 @@ def _to_response(db_session: Session, search: MarketplaceSearch) -> SearchRespon
         last_status=status.last_status,
         last_error_message=status.last_error_message,
         last_total_count=status.last_total_count,
-        listing_count=listing_count,
-        new_listing_count=new_count,
+        listing_count=counts.visible,
+        new_listing_count=counts.new,
+        new_last_day_count=counts.new_last_day,
+        gone_last_day_count=counts.gone_last_day,
         cheapest=_cheapest_response(db_session, search),
         created_at=search.created_at,
     )
@@ -540,15 +551,63 @@ def check_now(
     return _to_response(db_session, search)
 
 
+ListingSort = Literal["title", "price", "year", "mileage", "distance", "first_seen"]
+
+
+def _number(value: str | None) -> float | None:
+    try:
+        return float(value) if value else None
+    except ValueError:
+        return None
+
+
+def _car_sort_value(car: list[MarketplaceListing], column: ListingSort) -> str | float | None:
+    main = car[0]
+    if column == "title":
+        return main.title.lower()
+    if column == "price":
+        return float(main.current_price) if main.current_price is not None else None
+    if column == "distance":
+        return main.distance_meters
+    if column == "first_seen":
+        first_seen = earliest_listing(car).first_seen_at
+        return (first_seen if first_seen.tzinfo else first_seen.replace(tzinfo=UTC)).timestamp()
+    key = "constructionYear" if column == "year" else "mileage"
+    return _number(json.loads(main.attributes_json or "{}").get(key))
+
+
+def _sort_cars(
+    cars: list[list[MarketplaceListing]], column: ListingSort, direction: str
+) -> list[list[MarketplaceListing]]:
+    """Sort cars on a column; cars without a value stay at the bottom in both directions."""
+    keyed = [(_car_sort_value(car, column), car) for car in cars]
+    present = [item for item in keyed if item[0] is not None]
+    present.sort(key=lambda item: item[0], reverse=direction == "desc")
+    return [car for _, car in present] + [car for value, car in keyed if value is None]
+
+
 @router.get("/{search_id}/listings", response_model=ListingListResponse)
 def get_listings(
     search_id: int,
+    include_gone: bool = True,
+    sort: ListingSort | None = None,
+    direction: Literal["asc", "desc"] = "asc",
+    page: int = Query(default=1, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=500),
     identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
 ) -> ListingListResponse:
+    """Cars of a search, all at once or one page at a time (``page_size``)."""
     search = _get_owned_search(db_session, identity, search_id)
     now = datetime.now(UTC)
     cars = list_search_cars(db_session, search)
+    if not include_gone:
+        cars = [car for car in cars if car[0].gone_at is None]
+    if sort is not None:
+        cars = _sort_cars(cars, sort, direction)
+    total = len(cars)
+    if page_size is not None:
+        cars = cars[(page - 1) * page_size : page * page_size]
     archive_ids = archive_ids_for(
         db_session, owner_id=identity.owner_id, item_ids=[row.item_id for car in cars for row in car]
     )
@@ -557,6 +616,9 @@ def get_listings(
         search_id=search.id,
         distance_from=home.name if home is not None else None,
         items=[_car_response(car, now, archive_ids) for car in cars],
+        total=total,
+        page=page if page_size is not None else 1,
+        page_size=page_size,
     )
 
 
@@ -571,6 +633,7 @@ def _car_response(
         response.archive_id = next((archive_ids[row.item_id] for row in others if row.item_id in archive_ids), None)
     response.first_seen_at = first.first_seen_at
     response.is_new = is_listing_new(first, now)
+    response.highlights = car_highlights((row.title, json.loads(row.attributes_json or "{}")) for row in car)
     response.also_listed = [
         AlsoListedResponse(
             id=row.id,

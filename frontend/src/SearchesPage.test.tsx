@@ -51,6 +51,8 @@ const savedSearch = {
   last_total_count: 86,
   listing_count: 2,
   new_listing_count: 1,
+  new_last_day_count: 1,
+  gone_last_day_count: 3,
   cheapest: {
     item_id: "m300",
     marketplace: "marktplaats",
@@ -282,10 +284,11 @@ describe("Marktplaats searches", () => {
   it("shows listings of a search with new and price-drop markers", async () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/searches/7/listings")) {
+      if (url.includes("/searches/7/listings")) {
         return jsonResponse({
           search_id: 7,
           distance_from: "Daarle",
+          total: 1,
           items: [
             {
               id: 1,
@@ -302,6 +305,7 @@ describe("Marktplaats searches", () => {
               distance_km: 12,
               seller_type: "private",
               attributes: { constructionYear: "2021", mileage: "64500", fuel: "Benzine", country: "NL" },
+              highlights: ["AWD", "Tow hitch"],
               is_new: true,
               first_seen_at: "2026-11-23T10:00:00Z",
               last_seen_at: "2026-11-23T10:00:00Z",
@@ -340,7 +344,16 @@ describe("Marktplaats searches", () => {
     expect(text.replace(/\s/g, " ")).toContain("was € 22.500");
     expect(text).toContain("2021");
     expect(text.replace(/\s/g, " ")).toContain("64.500 km");
-    expect(text).toContain("Benzine");
+    expect(text).toContain("AWD");
+    expect(text).toContain("Tow hitch");
+    expect(text).not.toContain("Benzine");
+    const stats = document.querySelector(".search-detail-stats")?.textContent ?? "";
+    expect(stats).toContain("New 24h1");
+    expect(stats).toContain("Gone 24h3");
+    expect(screen.queryByText(/Show \d+ gone/)).toBeNull();
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toContainEqual(
+      expect.stringContaining("/searches/7/listings?include_gone=false&sort=first_seen&direction=desc&page=1&page_size=25"),
+    );
     expect(text).toContain("Almelo12 km");
     expect(screen.getByTestId("listing-row-m300").querySelector(".flag-nl")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Location · km from Daarle/ })).toBeTruthy();
@@ -352,7 +365,8 @@ describe("Marktplaats searches", () => {
     ]);
     expect(platforms.textContent?.replace(/\s/g, " ")).toContain("Marktplaats € 21.500");
     expect(text).toContain("battery capacity unknown");
-    expect(screen.getByTestId("source-autotrack").textContent).toContain("SnipeBot checks battery capacity itself");
+    expect(screen.getByTestId("source-autotrack").getAttribute("title")).toContain("SnipeBot checks battery capacity itself");
+    expect(screen.getByTestId("source-autotrack").textContent).toContain("AutoTrack43");
     await waitFor(() => expect((screen.getByLabelText("Model") as HTMLSelectElement).value).toBe("Golf"));
     expect((screen.getByLabelText("Year from") as HTMLInputElement).value).toBe("2018");
     expect((screen.getByLabelText("Value not stated") as HTMLSelectElement).value).toBe("quiet");
@@ -364,7 +378,7 @@ describe("Marktplaats searches", () => {
     expect((screen.getByLabelText("Alert price ceiling (€)") as HTMLInputElement).value).toBe("45.000");
   });
 
-  it("sorts listings by the clicked column", async () => {
+  it("asks the server for the clicked sort column and pages", async () => {
     const base = {
       url: "https://www.marktplaats.nl/v/m",
       image_url: null,
@@ -379,19 +393,21 @@ describe("Marktplaats searches", () => {
       price_history: [],
       marketplace: "marktplaats",
       unverified_filters: [],
+      current_price: 30000,
+      attributes: { constructionYear: "2024", mileage: "20000" },
+      first_seen_at: "2026-11-23T09:00:00Z",
     };
-    const items = [
-      { ...base, id: 1, item_id: "m1", title: "B car", current_price: 30000,
-        attributes: { constructionYear: "2024", mileage: "20000" }, first_seen_at: "2026-11-23T09:00:00Z" },
-      { ...base, id: 2, item_id: "m2", title: "A car", current_price: null,
-        attributes: { constructionYear: "2025", mileage: "5000" }, first_seen_at: "2026-11-23T11:00:00Z" },
-      { ...base, id: 3, item_id: "m3", title: "C car", current_price: 25000,
-        attributes: { constructionYear: "2026", mileage: "100" }, first_seen_at: "2026-11-23T10:00:00Z" },
-    ];
+    const requested: string[] = [];
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/searches/7/listings")) {
-        return jsonResponse({ search_id: 7, items });
+      if (url.includes("/searches/7/listings")) {
+        requested.push(url.slice(url.indexOf("?")));
+        const page = Number(new URL(url, "http://x").searchParams.get("page") ?? 1);
+        return jsonResponse({
+          search_id: 7,
+          total: 30,
+          items: [{ ...base, id: page, item_id: `m${page}`, title: `Car on page ${page}` }],
+        });
       }
       if (url.endsWith("/searches/7")) {
         return jsonResponse(savedSearch);
@@ -402,20 +418,21 @@ describe("Marktplaats searches", () => {
     window.history.pushState({}, "", "/searches/7");
     render(<App />);
 
-    const order = () =>
-      screen.getAllByTestId(/^listing-row-/).map((row) => row.getAttribute("data-testid"));
     await screen.findByTestId("listing-row-m1");
-    expect(order()).toEqual(["listing-row-m2", "listing-row-m3", "listing-row-m1"]);
+    expect(screen.getByText("Page 1 of 2")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /^Price/ }));
-    expect(order()).toEqual(["listing-row-m3", "listing-row-m1", "listing-row-m2"]);
+    await waitFor(() => expect(requested[requested.length - 1]).toContain("sort=price&direction=asc&page=1"));
     fireEvent.click(screen.getByRole("button", { name: /^Price/ }));
-    expect(order()).toEqual(["listing-row-m1", "listing-row-m3", "listing-row-m2"]);
+    await waitFor(() => expect(requested[requested.length - 1]).toContain("sort=price&direction=desc&page=1"));
 
-    fireEvent.click(screen.getByRole("button", { name: /^Mileage/ }));
-    expect(order()).toEqual(["listing-row-m3", "listing-row-m2", "listing-row-m1"]);
+    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    await screen.findByTestId("listing-row-m2");
+    expect(requested[requested.length - 1]).toContain("page=2&page_size=25");
 
-    fireEvent.click(screen.getByRole("button", { name: /^Listing/ }));
-    expect(order()).toEqual(["listing-row-m2", "listing-row-m1", "listing-row-m3"]);
+    fireEvent.change(screen.getByLabelText("Per page"), { target: { value: "all" } });
+    await waitFor(() => expect(requested[requested.length - 1]).toBe("?include_gone=false&sort=price&direction=desc"));
+    expect(window.localStorage.getItem("snipebot.listingsPageSize")).toBe("all");
+    window.localStorage.removeItem("snipebot.listingsPageSize");
   });
 });

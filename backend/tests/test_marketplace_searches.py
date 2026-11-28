@@ -463,6 +463,46 @@ def test_api_preview_create_list_and_listings() -> None:
         app.dependency_overrides.clear()
 
 
+def test_api_listings_page_sort_and_day_counts() -> None:
+    _reset_tables()
+    fetcher = FakeFetcher()
+    notifier = CollectingNotifier()
+    search_id = _create(fetcher)
+    _run(fetcher, notifier, search_payload([listing(100), listing(200)]))
+    _run(
+        fetcher,
+        notifier,
+        search_payload(
+            [
+                listing(200),
+                listing(300, title="Volkswagen Golf 4x4 met trekhaak", price_cents=1200000),
+                listing(400, price_cents=900000),
+            ]
+        ),
+    )
+    client = _api_client(fetcher)
+    try:
+        search = client.get(f"/searches/{search_id}").json()
+        assert (search["new_last_day_count"], search["gone_last_day_count"]) == (2, 1)
+
+        params = {"include_gone": "false", "sort": "price", "direction": "asc", "page_size": 2}
+        first = client.get(f"/searches/{search_id}/listings", params=params).json()
+        assert (first["total"], first["page"], first["page_size"]) == (3, 1, 2)
+        assert [item["item_id"] for item in first["items"]] == ["m400", "m300"]
+        assert first["items"][1]["highlights"] == ["AWD", "Tow hitch"]
+        assert first["items"][0]["highlights"] == []
+
+        second = client.get(f"/searches/{search_id}/listings", params={**params, "page": 2}).json()
+        assert [item["item_id"] for item in second["items"]] == ["m200"]
+
+        everything = client.get(f"/searches/{search_id}/listings").json()
+        assert everything["total"] == 4
+        assert everything["page_size"] is None
+        assert everything["items"][-1]["item_id"] == "m100"
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_api_patch_filters_rebaselines_and_delete() -> None:
     _reset_tables()
     fetcher = FakeFetcher()

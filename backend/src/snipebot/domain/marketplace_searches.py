@@ -96,6 +96,8 @@ MAX_KEYWORDS = 50
 _UNSET = object()
 MAX_ALERTS_PER_CHECK = 10
 NEW_LISTING_WINDOW = timedelta(hours=48)
+# Window of the "new" and "gone" counts on a search.
+COUNT_WINDOW = timedelta(hours=24)
 # A network error (DNS hiccup, dropped connection) is retried once after this
 # delay; when that fails too, the source stays "ok" until the next check also
 # fails, so a short hiccup does not show as an error.
@@ -465,13 +467,34 @@ def list_search_listings(
     )
 
 
-def search_listing_counts(db_session: Session, search: MarketplaceSearch) -> tuple[int, int]:
-    """Return (visible cars, new cars) for overview display; a car on several platforms counts once."""
+@dataclass(slots=True)
+class ListingCounts:
+    visible: int
+    new: int
+    # Cars first found (outside a silent baseline) or gone in the last day.
+    new_last_day: int
+    gone_last_day: int
+
+
+def search_listing_counts(db_session: Session, search: MarketplaceSearch) -> ListingCounts:
+    """Car counts for display; a car on several platforms counts once."""
     cars = list_search_cars(db_session, search)
     now = datetime.now(UTC)
+    since = now - COUNT_WINDOW
     visible = [car for car in cars if car[0].gone_at is None]
-    new = sum(1 for car in visible if is_listing_new(earliest_listing(car), now))
-    return len(visible), new
+    firsts = [earliest_listing(car) for car in cars]
+    return ListingCounts(
+        visible=len(visible),
+        new=sum(1 for car in visible if is_listing_new(earliest_listing(car), now)),
+        new_last_day=sum(
+            1 for first in firsts if not first.from_baseline and _aware(first.first_seen_at) >= since
+        ),
+        gone_last_day=sum(
+            1
+            for car in cars
+            if car[0].gone_at is not None and max(_aware(row.gone_at) for row in car) >= since
+        ),
+    )
 
 
 def list_search_cars(
