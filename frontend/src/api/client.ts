@@ -596,6 +596,9 @@ export type MarketplaceSearch = {
   last_total_count: number | null;
   listing_count: number;
   new_listing_count: number;
+  // Cars found or gone in the last 24 hours (optional for older API responses).
+  new_last_day_count?: number;
+  gone_last_day_count?: number;
   cheapest: {
     item_id: string;
     marketplace: string;
@@ -654,6 +657,8 @@ export type MarketplaceListing = {
   archive_id: number | null;
   // The same car on other platforms (matched on year, mileage, place and price).
   also_listed?: AlsoListed[];
+  // Details that tell cars apart, e.g. "AWD", "Tow hitch".
+  highlights?: string[];
 };
 
 export type AlsoListed = {
@@ -756,10 +761,37 @@ export type MarketplaceListingList = {
   items: MarketplaceListing[];
   // Place distances are measured from (straight line), if configured.
   distance_from?: string | null;
+  // Cars matching the request before paging.
+  total?: number;
 };
 
-export async function fetchMarketplaceListings(searchId: number): Promise<MarketplaceListingList> {
-  const response = await apiFetch(`${API_BASE_URL}/searches/${searchId}/listings`);
+export type ListingSortColumn = "title" | "price" | "year" | "mileage" | "distance" | "first_seen";
+
+export type ListingQuery = {
+  sort?: ListingSortColumn;
+  direction?: "asc" | "desc";
+  page?: number;
+  // Omitted: all cars at once.
+  pageSize?: number | null;
+  includeGone?: boolean;
+};
+
+export async function fetchMarketplaceListings(
+  searchId: number,
+  query: ListingQuery = {},
+): Promise<MarketplaceListingList> {
+  const params = new URLSearchParams();
+  if (query.includeGone === false) params.set("include_gone", "false");
+  if (query.sort) {
+    params.set("sort", query.sort);
+    params.set("direction", query.direction ?? "asc");
+  }
+  if (query.pageSize) {
+    params.set("page", String(query.page ?? 1));
+    params.set("page_size", String(query.pageSize));
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await apiFetch(`${API_BASE_URL}/searches/${searchId}/listings${suffix}`);
   return parseResponse<MarketplaceListingList>(response);
 }
 
