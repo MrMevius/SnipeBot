@@ -107,17 +107,27 @@ describe("Archive", () => {
     fetchMock.mockReset();
   });
 
-  it("lists archived listings with filters and sorting", async () => {
+  it("lists gone cars with filters, sorting and pages", async () => {
     const requests: string[] = [];
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/archive?") || url.endsWith("/archive")) {
         requests.push(url);
         return jsonResponse({
-          items: [summary],
-          total: 1,
-          limit: 50,
-          offset: 0,
+          items: [
+            {
+              ...summary,
+              gone_at: "2026-11-25T10:00:00Z",
+              highlights: ["AWD", "Tow hitch"],
+              also_listed: [
+                { id: 9, marketplace: "autotrack", url: "https://autotrack.nl/x", price: 20950, gone_at: "2026-11-25T09:00:00Z" },
+              ],
+            },
+          ],
+          total: 30,
+          page: 1,
+          page_size: 25,
+          gone_last_day: 2,
           usage: { items: 1, images: 2, bytes: 3 * 1024 * 1024 },
         });
       }
@@ -132,15 +142,29 @@ describe("Archive", () => {
 
     const row = await screen.findByTestId("archive-row-m300");
     expect(row.textContent).toContain("Volkswagen Golf 300");
-    expect(row.textContent).toContain("2021 · 64.500 km");
+    expect(row.textContent).toContain("2021");
+    expect(row.textContent?.replace(/\s/g, " ")).toContain("64.500 km");
     expect(row.textContent).toContain("Golf GTI");
+    expect(row.textContent).toContain("Tow hitch");
+    expect(row.textContent).toContain("25-11");
     expect(row.querySelector("img")?.getAttribute("src")).toContain("/archive/images/11");
-    expect(screen.getByTestId("archive-usage").textContent).toBe("1 listings · 2 photos · 3.0 MB");
+    const platforms = screen.getByTestId("archive-platforms-m300");
+    expect([...platforms.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
+      "/archive/3",
+      "/archive/9",
+    ]);
+    expect(screen.getByTestId("archive-usage").textContent).toBe("2 photos · 3.0 MB");
+    expect(document.querySelector(".search-detail-stats")?.textContent).toContain("Gone 24h2");
+    expect(screen.queryByLabelText("Status")).toBeNull();
+    expect(requests[0]).toContain("sort=gone&direction=desc&page=1&page_size=25");
 
-    fireEvent.click(screen.getByRole("button", { name: /^Price/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Last price/ }));
     await screen.findByTestId("archive-row-m300");
-    expect(requests[requests.length - 1]).toContain("sort=price");
-    expect(requests[requests.length - 1]).toContain("order=asc");
+    expect(requests[requests.length - 1]).toContain("sort=price&direction=asc");
+
+    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    await screen.findByTestId("archive-row-m300");
+    expect(requests[requests.length - 1]).toContain("page=2");
 
     fireEvent.change(screen.getByLabelText("Search text"), { target: { value: "golf" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));

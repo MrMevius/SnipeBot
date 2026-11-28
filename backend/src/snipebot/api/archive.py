@@ -14,17 +14,22 @@ from snipebot.api.deps import (
 )
 from snipebot.core.config import get_settings
 from snipebot.core.metrics import metrics
+from snipebot.domain.listing_highlights import car_highlights
 from snipebot.domain.marketplace_archive import (
     ArchiveStore,
+    archive_cars,
+    archive_gone_last_day,
     archive_usage,
     build_store,
+    car_first_seen_at,
+    car_gone_at,
     cover_images,
     delete_archive_item,
     duplicate_items,
     get_archive_image,
     get_archive_item,
     item_searches,
-    list_archive_items,
+    list_archive_cars,
     refresh_archive_item,
     version_changes,
 )
@@ -63,6 +68,27 @@ class ArchiveItemSummary(BaseModel):
     searches: list[ArchiveSearchRef]
 
 
+class ArchiveAlsoListed(BaseModel):
+    """The same car on another platform."""
+
+    id: int
+    marketplace: str
+    url: str
+    price: float | None
+    gone_at: datetime | None
+
+
+class ArchiveCarSummary(ArchiveItemSummary):
+    """A car in the archive: its main listing, with the car's other platforms.
+
+    ``first_seen_at`` is when the car was first found, ``gone_at`` when its
+    last listing went (None while one is still online).
+    """
+
+    also_listed: list[ArchiveAlsoListed]
+    highlights: list[str]
+
+
 class ArchiveUsageResponse(BaseModel):
     items: int
     images: int
@@ -70,10 +96,13 @@ class ArchiveUsageResponse(BaseModel):
 
 
 class ArchiveListResponse(BaseModel):
-    items: list[ArchiveItemSummary]
+    items: list[ArchiveCarSummary]
+    # Cars matching the request before paging.
     total: int
-    limit: int
-    offset: int
+    page: int
+    page_size: int | None
+    # Cars whose last listing went in the last 24 hours.
+    gone_last_day: int
     usage: ArchiveUsageResponse
 
 
@@ -238,16 +267,17 @@ def _detail_response(
 def get_archive(
     q: str | None = Query(default=None, max_length=200),
     search_id: int | None = None,
-    status: Literal["online", "gone"] | None = None,
+    status: Literal["gone", "online", "all"] = "gone",
     marketplace: str | None = Query(default=None, max_length=32),
-    sort: Literal["first_seen", "last_seen", "price", "title"] = "first_seen",
-    order: Literal["asc", "desc"] = "desc",
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    sort: Literal["gone", "first_seen", "price", "title", "year", "mileage"] = "gone",
+    direction: Literal["asc", "desc"] = "desc",
+    page: int = Query(default=1, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=500),
     identity: RequestIdentity = Depends(get_request_identity),
     db_session: Session = Depends(get_db_session),
 ) -> ArchiveListResponse:
-    items, total = list_archive_items(
+    """Cars in the archive, by default those gone from every platform."""
+    cars = list_archive_cars(
         db_session,
         owner_id=identity.owner_id,
         q=q,
@@ -255,26 +285,57 @@ def get_archive(
         status=status,
         marketplace=marketplace,
         sort=sort,
-        order=order,
-        limit=limit,
-        offset=offset,
+        direction=direction,
     )
-    covers = cover_images(db_session, [item.id for item in items])
+    total = len(cars)
+    if page_size is not None:
+        cars = cars[(page - 1) * page_size : page * page_size]
+    covers = cover_images(db_session, [item.id for car in cars for item in car])
     searches = item_searches(
-        db_session, owner_id=identity.owner_id, item_ids=[item.item_id for item in items]
+        db_session, owner_id=identity.owner_id, item_ids=[item.item_id for car in cars for item in car]
     )
     usage = archive_usage(db_session, owner_id=identity.owner_id)
     return ArchiveListResponse(
-        items=[
-            ArchiveItemSummary(
-                **_summary_fields(item, covers.get(item.id), searches.get(item.item_id, []))
-            )
-            for item in items
-        ],
+        items=[_car_summary(car, covers, searches) for car in cars],
         total=total,
-        limit=limit,
-        offset=offset,
+        page=page if page_size is not None else 1,
+        page_size=page_size,
+        gone_last_day=archive_gone_last_day(archive_cars(db_session, owner_id=identity.owner_id)),
         usage=ArchiveUsageResponse(items=usage.items, images=usage.images, bytes=usage.bytes),
+    )
+
+
+def _car_summary(
+    car: list[MarketplaceItem],
+    covers: dict[int, int],
+    searches: dict[str, list[tuple[int, str]]],
+) -> ArchiveCarSummary:
+    main, others = car[0], car[1:]
+    car_searches = sorted(
+        {ref for item in car for ref in searches.get(item.item_id, [])}, key=lambda ref: (ref[1], ref[0])
+    )
+    fields = _summary_fields(
+        main,
+        covers.get(main.id) or next((covers[item.id] for item in others if item.id in covers), None),
+        car_searches,
+    )
+    fields["first_seen_at"] = car_first_seen_at(car)
+    fields["gone_at"] = car_gone_at(car)
+    return ArchiveCarSummary(
+        **fields,
+        also_listed=[
+            ArchiveAlsoListed(
+                id=item.id,
+                marketplace=item.marketplace,
+                url=item.url,
+                price=float(item.price) if item.price is not None else None,
+                gone_at=item.gone_at,
+            )
+            for item in others
+        ],
+        highlights=car_highlights(
+            (item.title, json.loads(item.summary_attributes_json or "{}")) for item in car
+        ),
     )
 
 

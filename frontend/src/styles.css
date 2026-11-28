@@ -1041,19 +1041,6 @@ img.product-thumb {
   }
 }
 
-.archive-filters {
-  grid-template-columns: 2fr 1fr 1fr auto;
-  align-items: end;
-  margin-bottom: 12px;
-}
-
-.archive-pager {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: flex-end;
-  margin-top: 12px;
-}
 
 .pill.archive-error-pill {
   margin-left: 6px;
@@ -1233,7 +1220,6 @@ button.archive-thumb.active {
 }
 
 @media (max-width: 900px) {
-  .archive-filters,
   .archive-columns {
     grid-template-columns: 1fr;
   }
@@ -1511,6 +1497,23 @@ button.archive-thumb.active {
   gap: 12px;
   margin-top: 14px;
   font-size: 13px;
+}
+
+.archive-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.archive-filter-row input {
+  flex: 1 1 240px;
+  width: auto;
+}
+
+.archive-filter-row select {
+  flex: 0 1 200px;
+  width: auto;
 }
 
 .listing-highlights {
